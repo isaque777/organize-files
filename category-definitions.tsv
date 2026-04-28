@@ -1,0 +1,15 @@
+# Key	Folder	Extensions
+Images	Images	.jpg .jpeg .png .gif .bmp .webp .tif .tiff .heic .heif .raw .cr2 .nef .arw .dng .orf .rw2 .svg .ico .avif .jfif .apng .jxl .qoi .raf .sr2 .srw .pef .erf .kdc .mrw .x3f .mef .iiq .nrw
+Videos	Videos	.mp4 .mov .avi .mkv .wmv .m4v .mpg .mpeg .webm .3gp .mts .m2ts .ts .flv .f4v .asf .rmvb .ogv .ogm .dv .vob .mxf .tod .lrv
+Audio	Audio	.mp3 .wav .flac .aac .m4a .ogg .oga .opus .wma .aiff .aif .alac .mid .midi .amr .weba .mka .ra .rm .spx .mp2 .mpa .ac3 .dts
+Documents	Documents	.pdf .doc .docx .docm .dot .dotx .dotm .xls .xlsx .xlsm .xlt .xltx .xltm .ppt .pptx .pptm .pps .ppsx .pot .potx .potm .txt .rtf .odt .ods .odp .pages .numbers .key .md .tex .one .onepkg .xps .oxps .wps .wpd .abw .ps
+Archives	Archives	.zip .rar .7z .tar .gz .bz2 .xz .tgz .tbz2 .txz .cab .lz .lzma .zst .arj .ace .pak .sit .sitx .war
+Code	Code	.ps1 .psm1 .psd1 .sh .bash .zsh .fish .bat .cmd .py .ipynb .js .mjs .cjs .ts .tsx .jsx .vue .svelte .java .c .cpp .h .hpp .cc .cxx .cs .go .rs .rb .php .swift .kt .kts .scala .groovy .gradle .dart .lua .pl .pm .sql .r .rmd .jl .nim .clj .cljs .asm .s .f .f90
+Fonts	Fonts	.ttf .otf .woff .woff2 .eot .ttc .fon
+Ebooks	Ebooks	.epub .mobi .azw .azw3 .fb2 .cbz .cbr .djvu .ibooks .lit
+Subtitles	Subtitles	.srt .sub .ass .ssa .vtt .ttml .sbv .dfxp
+Data	Data	.csv .tsv .json .jsonl .ndjson .geojson .xml .yaml .yml .toml .ini .db .sqlite .sqlite3 .parquet .feather .avro .orc .bson .npy .h5 .hdf5 .mat .pkl .pickle .sav
+DiskImages	DiskImages	.iso .img .dmg .vhd .vhdx .vmdk .qcow2 .toast .cue .nrg
+Executables	Executables	.exe .msi .msix .appx .apk .deb .rpm .pkg .bin .appimage .jar .com .run .scr .gadget .command
+DesignFiles	DesignFiles	.psd .psb .ai .eps .indd .xd .fig .sketch .xcf .kra .afdesign .afphoto .afpub .cdr .dwg .dxf
+Models3D	3DModels	.stl .obj .fbx .dae .glb .gltf .3ds .blend .ply .step .stp .iges .igs .usdz .x3d .wrl .vrml .ma .mb .max

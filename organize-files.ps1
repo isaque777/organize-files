@@ -62,64 +62,49 @@ if (-not ($UseName -or $UseDate -or $UseSize)) {
     $UseDate = $true
 }
 
-$categoryDefinitions = [ordered]@{
-    Images = @{
-        Folder = "Images"
-        Extensions = @(".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".heic", ".heif", ".raw", ".cr2", ".nef", ".arw", ".dng", ".orf", ".rw2", ".svg", ".ico", ".avif", ".jfif", ".apng", ".jxl", ".qoi", ".raf", ".sr2", ".srw", ".pef", ".erf", ".kdc", ".mrw", ".x3f", ".mef", ".iiq", ".nrw")
+$scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+
+function Get-CategoryDefinitions {
+    param([Parameter(Mandatory=$true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Category definitions file not found: $Path"
     }
-    Videos = @{
-        Folder = "Videos"
-        Extensions = @(".mp4", ".mov", ".avi", ".mkv", ".wmv", ".m4v", ".mpg", ".mpeg", ".webm", ".3gp", ".mts", ".m2ts", ".ts", ".flv", ".f4v", ".asf", ".rmvb", ".ogv", ".ogm", ".dv", ".vob", ".mxf", ".tod", ".lrv")
+
+    $definitions = [ordered]@{}
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith("#")) {
+            continue
+        }
+
+        $parts = $line -split "`t", 3
+        if ($parts.Count -ne 3) {
+            throw "Invalid category definition line: $line"
+        }
+
+        $extensions = @()
+        foreach ($extension in ($parts[2] -split ' ')) {
+            if (-not [string]::IsNullOrWhiteSpace($extension)) {
+                $extensions += $extension.Trim()
+            }
+        }
+
+        $key = $parts[0].Trim()
+        $folder = $parts[1].Trim()
+        if (-not $key -or -not $folder -or $extensions.Count -eq 0) {
+            throw "Invalid category definition line: $line"
+        }
+
+        $definitions[$key] = @{
+            Folder = $folder
+            Extensions = $extensions
+        }
     }
-    Audio = @{
-        Folder = "Audio"
-        Extensions = @(".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".oga", ".opus", ".wma", ".aiff", ".aif", ".alac", ".mid", ".midi", ".amr", ".weba", ".mka", ".ra", ".rm", ".spx", ".mp2", ".mpa", ".ac3", ".dts")
-    }
-    Documents = @{
-        Folder = "Documents"
-        Extensions = @(".pdf", ".doc", ".docx", ".docm", ".dot", ".dotx", ".dotm", ".xls", ".xlsx", ".xlsm", ".xlt", ".xltx", ".xltm", ".ppt", ".pptx", ".pptm", ".pps", ".ppsx", ".pot", ".potx", ".potm", ".txt", ".rtf", ".odt", ".ods", ".odp", ".pages", ".numbers", ".key", ".md", ".tex", ".one", ".onepkg", ".xps", ".oxps", ".wps", ".wpd", ".abw", ".ps")
-    }
-    Archives = @{
-        Folder = "Archives"
-        Extensions = @(".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".tgz", ".tbz2", ".txz", ".cab", ".lz", ".lzma", ".zst", ".arj", ".ace", ".pak", ".sit", ".sitx", ".war")
-    }
-    Code = @{
-        Folder = "Code"
-        Extensions = @(".ps1", ".psm1", ".psd1", ".sh", ".bash", ".zsh", ".fish", ".bat", ".cmd", ".py", ".ipynb", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".java", ".c", ".cpp", ".h", ".hpp", ".cc", ".cxx", ".cs", ".go", ".rs", ".rb", ".php", ".swift", ".kt", ".kts", ".scala", ".groovy", ".gradle", ".dart", ".lua", ".pl", ".pm", ".sql", ".r", ".rmd", ".jl", ".nim", ".clj", ".cljs", ".asm", ".s", ".f", ".f90")
-    }
-    Fonts = @{
-        Folder = "Fonts"
-        Extensions = @(".ttf", ".otf", ".woff", ".woff2", ".eot", ".ttc", ".fon")
-    }
-    Ebooks = @{
-        Folder = "Ebooks"
-        Extensions = @(".epub", ".mobi", ".azw", ".azw3", ".fb2", ".cbz", ".cbr", ".djvu", ".ibooks", ".lit")
-    }
-    Subtitles = @{
-        Folder = "Subtitles"
-        Extensions = @(".srt", ".sub", ".ass", ".ssa", ".vtt", ".ttml", ".sbv", ".dfxp")
-    }
-    Data = @{
-        Folder = "Data"
-        Extensions = @(".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".geojson", ".xml", ".yaml", ".yml", ".toml", ".ini", ".db", ".sqlite", ".sqlite3", ".parquet", ".feather", ".avro", ".orc", ".bson", ".npy", ".h5", ".hdf5", ".mat", ".pkl", ".pickle", ".sav")
-    }
-    DiskImages = @{
-        Folder = "DiskImages"
-        Extensions = @(".iso", ".img", ".dmg", ".vhd", ".vhdx", ".vmdk", ".qcow2", ".toast", ".cue", ".nrg")
-    }
-    Executables = @{
-        Folder = "Executables"
-        Extensions = @(".exe", ".msi", ".msix", ".appx", ".apk", ".deb", ".rpm", ".pkg", ".bin", ".appimage", ".jar", ".com", ".run", ".scr", ".gadget", ".command")
-    }
-    DesignFiles = @{
-        Folder = "DesignFiles"
-        Extensions = @(".psd", ".psb", ".ai", ".eps", ".indd", ".xd", ".fig", ".sketch", ".xcf", ".kra", ".afdesign", ".afphoto", ".afpub", ".cdr", ".dwg", ".dxf")
-    }
-    Models3D = @{
-        Folder = "3DModels"
-        Extensions = @(".stl", ".obj", ".fbx", ".dae", ".glb", ".gltf", ".3ds", ".blend", ".ply", ".step", ".stp", ".iges", ".igs", ".usdz", ".x3d", ".wrl", ".vrml", ".ma", ".mb", ".max")
-    }
+
+    return ,$definitions
 }
+
+$categoryDefinitions = Get-CategoryDefinitions -Path (Join-Path $scriptRoot "category-definitions.tsv")
 
 function Normalize-Extension {
     param([string]$Extension)

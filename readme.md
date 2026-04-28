@@ -1,8 +1,8 @@
-# Universal File Sync Organizer
+# Organize Files CLI
 
-A flexible PowerShell-based organizer for syncing, deduplicating, and sorting many different file types across directories.
+A flexible file-organizing CLI for syncing, deduplicating, and sorting many different file types across directories.
 
-The main PowerShell entrypoint is `sync-files.ps1`, and `sync-files.sh` provides a Bash launcher for Linux and macOS environments that have PowerShell installed.
+The CLI entrypoints are `organize-files.ps1` for PowerShell and `organize-files.sh` for Bash. Both support the same command-line flags across Windows, Linux, and macOS.
 
 ---
 
@@ -16,6 +16,9 @@ The main PowerShell entrypoint is `sync-files.ps1`, and `sync-files.sh` provides
 * Copy by default, or move files with `-MoveFiles`
 * Optional type-based folder separation with `-SeparateByType`
 * Optional year/month organization with `-OrganizeByDate`
+* Command-line interface with matching PowerShell and Bash entrypoints
+* Shared category-definition file consumed by both entrypoints to keep file-type coverage aligned
+* Native Bash implementation for Linux and macOS, not just a PowerShell wrapper
 * EXIF or shell metadata date lookup when available
 * Filename date extraction fallback
 * Deduplication and optional size-based replacement logic
@@ -119,7 +122,7 @@ Unknown extensions go into `Other` when type separation is enabled.
 ### Dry Run for Selected File Types
 
 ```powershell
-.\sync-files.ps1 `
+.\organize-files.ps1 `
   -Source "E:\cloud","F:\camera-roll" `
   -Targets "D:\Library" `
   -Output "D:\OrganizedFiles" `
@@ -133,7 +136,7 @@ Unknown extensions go into `Other` when type separation is enabled.
 ### Scan Everything When No Flags Are Provided
 
 ```powershell
-.\sync-files.ps1 `
+.\organize-files.ps1 `
   -Source "E:\mixed-backup","F:\desktop-export" `
   -Targets "D:\Library" `
   -Output "D:\OrganizedFiles" `
@@ -144,7 +147,7 @@ Unknown extensions go into `Other` when type separation is enabled.
 ### Move Archive Files Instead of Copying
 
 ```powershell
-.\sync-files.ps1 `
+.\organize-files.ps1 `
   -Source "E:\downloads" `
   -Targets "D:\Library" `
   -Output "D:\OrganizedFiles" `
@@ -153,10 +156,10 @@ Unknown extensions go into `Other` when type separation is enabled.
   -MoveFiles
 ```
 
-### Linux or macOS Launcher
+### Linux or macOS Bash Script
 
 ```bash
-./sync-files.sh \
+./organize-files.sh \
   -Source "/mnt/cloud" "/mnt/backup" \
   -Targets "/srv/library" \
   -Output "/srv/organized-files" \
@@ -165,7 +168,7 @@ Unknown extensions go into `Other` when type separation is enabled.
   -SeparateByType
 ```
 
-The Bash launcher forwards the same arguments to `sync-files.ps1`.
+The Bash script is a native implementation and does not shell out to PowerShell.
 
 ---
 
@@ -191,7 +194,7 @@ COPY: D:\source\report.pdf -> D:\OrganizedFiles\Documents\2026\04\report.pdf
 
 ## Known Limitations
 
-* EXIF and shell metadata lookup is primarily available on Windows. On Linux and macOS, the script falls back to filename and filesystem timestamps.
+* The Bash implementation uses optional `exiftool` metadata when it is available. Without it, Linux and macOS runs fall back to filename and filesystem timestamps.
 * Unknown extensions can still be copied when no category flags are used, but they are only grouped into a named category if the script recognizes their extension.
 * Files without EXIF or filename dates fall back to filesystem dates.
 * Some apps strip metadata, so timestamps may not reflect when a photo or video was originally created.
@@ -200,10 +203,14 @@ COPY: D:\source\report.pdf -> D:\OrganizedFiles\Documents\2026\04\report.pdf
 
 ## Requirements
 
-* Windows PowerShell 5+ or PowerShell 7+ on Windows
-* PowerShell 7+ on Linux or macOS
-* Bash for `sync-files.sh`
-* No external dependencies
+* Windows PowerShell 5+ or PowerShell 7+ for `organize-files.ps1`
+* Bash 4+ for `organize-files.sh`
+* Standard `find`, `stat`, `date`, `cp`, and `mv` utilities on Linux or macOS
+* No required external dependencies
+
+Optional:
+
+* `exiftool` for richer media date detection in the Bash script
 
 ---
 
