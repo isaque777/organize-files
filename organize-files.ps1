@@ -399,6 +399,65 @@ function Get-SupplementalMetadata {
     return $null
 }
 
+function Convert-ToDateTimeFromMetadataValue {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [datetime]) {
+        return $Value
+    }
+
+    if ($Value -is [datetimeoffset]) {
+        return $Value.UtcDateTime
+    }
+
+    if ($Value -is [string]) {
+        $trimmed = $Value.Trim()
+        if (-not $trimmed) {
+            return $null
+        }
+
+        $parsedOffset = $null
+        if ([datetimeoffset]::TryParse($trimmed, [ref]$parsedOffset)) {
+            return $parsedOffset.UtcDateTime
+        }
+
+        $parsedDate = $null
+        if ([datetime]::TryParse($trimmed, [ref]$parsedDate)) {
+            return $parsedDate
+        }
+
+        return $null
+    }
+
+    if ($Value -is [int] -or $Value -is [long] -or $Value -is [double]) {
+        try {
+            return [datetimeoffset]::FromUnixTimeSeconds([int64]$Value).UtcDateTime
+        } catch {
+            try {
+                return [datetimeoffset]::FromUnixTimeMilliseconds([int64]$Value).UtcDateTime
+            } catch {
+                return $null
+            }
+        }
+    }
+
+    $timestampProperty = $Value.PSObject.Properties['timestamp']
+    if ($timestampProperty -and $null -ne $timestampProperty.Value) {
+        return Convert-ToDateTimeFromMetadataValue -Value $timestampProperty.Value
+    }
+
+    $formattedProperty = $Value.PSObject.Properties['formatted']
+    if ($formattedProperty -and $formattedProperty.Value) {
+        return Convert-ToDateTimeFromMetadataValue -Value $formattedProperty.Value
+    }
+
+    return $null
+}
+
 function Apply-SupplementalMetadata {
     param(
         [string]$FilePath,
@@ -412,14 +471,22 @@ function Apply-SupplementalMetadata {
     try {
         # Apply CreationTime if specified
         if ($Metadata.CreationTime) {
-            $creationDate = [datetime]$Metadata.CreationTime
-            Set-ItemProperty -LiteralPath $FilePath -Name CreationTime -Value $creationDate -ErrorAction Stop
+            $creationDate = Convert-ToDateTimeFromMetadataValue -Value $Metadata.CreationTime
+            if ($creationDate) {
+                Set-ItemProperty -LiteralPath $FilePath -Name CreationTime -Value $creationDate -ErrorAction Stop
+            } else {
+                Write-Output "Warning: Unsupported CreationTime metadata value for file: $FilePath"
+            }
         }
 
         # Apply LastWriteTime if specified
         if ($Metadata.LastWriteTime) {
-            $writeDate = [datetime]$Metadata.LastWriteTime
-            Set-ItemProperty -LiteralPath $FilePath -Name LastWriteTime -Value $writeDate -ErrorAction Stop
+            $writeDate = Convert-ToDateTimeFromMetadataValue -Value $Metadata.LastWriteTime
+            if ($writeDate) {
+                Set-ItemProperty -LiteralPath $FilePath -Name LastWriteTime -Value $writeDate -ErrorAction Stop
+            } else {
+                Write-Output "Warning: Unsupported LastWriteTime metadata value for file: $FilePath"
+            }
         }
 
         # Apply custom properties (attributes, etc)

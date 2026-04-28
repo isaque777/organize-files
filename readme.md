@@ -4,6 +4,8 @@ A flexible file-organizing CLI for syncing, deduplicating, and sorting many diff
 
 The CLI entrypoints are `organize-files.ps1` for PowerShell and `organize-files.sh` for Bash. Both support the same command-line flags across Windows, Linux, and macOS.
 
+This tool is especially useful for files retrieved from Google Cloud/Google Photos exports (for example, Google Takeout), where you want to copy and merge those files into an existing local library while preserving and normalizing metadata.
+
 ---
 
 ## Features
