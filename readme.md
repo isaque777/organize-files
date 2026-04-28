@@ -28,6 +28,57 @@ The CLI entrypoints are `organize-files.ps1` for PowerShell and `organize-files.
 
 ---
 
+## Parameter Validation & Autocomplete
+
+### PowerShell
+
+**Parameter Validation:**
+- Unknown parameters are automatically rejected with an error message
+- `-MaxFiles` and `-Threads` must be positive integers
+- All parameters are validated before execution
+
+**Autocomplete Support:**
+
+Load the completion script in your PowerShell profile:
+
+```powershell
+# Add this to your profile (usually $PROFILE)
+. "C:\path\to\organize-files\organize-files.completion.ps1"
+```
+
+This enables:
+- Tab completion for all available flags (`-Images`, `-Videos`, `-DryRun`, etc.)
+- Directory completion for `-Sources`, `-Targets`, and `-Output` parameters
+- Suggested extensions for `-IgnoreExtensions`
+
+### Bash/Linux/macOS
+
+**Parameter Validation:**
+- Unknown arguments are rejected with an error message
+- `-MaxFiles` must be a non-negative integer
+- `-Threads` must be a positive integer (≥ 1)
+- All parameters are validated before execution
+
+**Autocomplete Support:**
+
+Install the completion script:
+
+```bash
+# Add this to your .bashrc or .bash_profile
+source /path/to/organize-files/organize-files.completion.sh
+
+# Or copy to bash_completion.d
+sudo cp organize-files.completion.sh /etc/bash_completion.d/organize-files
+```
+
+This enables:
+- Tab completion for all available flags
+- Directory completion for `-Sources`, `-Targets`, and `-Output`
+- File completion for `-LogFile`
+- Common extensions for `-IgnoreExtensions`
+
+---
+
 ## Supported Categories
 
 The script currently knows these file groups:

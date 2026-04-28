@@ -1,3 +1,4 @@
+[CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
     [Alias("Source")]
@@ -21,7 +22,10 @@ param(
     [Alias("SeparateMedia")]
     [switch]$SeparateByType,
 
+    [ValidateRange(0, [int]::MaxValue)]
     [int]$MaxFiles = 0,
+
+    [ValidateRange(1, [int]::MaxValue)]
     [int]$Threads = 1,
 
     [switch]$UseFileNameDate,

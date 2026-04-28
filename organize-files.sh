@@ -508,6 +508,24 @@ parse_multi_value_option() {
   PARSE_REMAINING_COUNT=$#
 }
 
+validate_positive_integer() {
+  local value="$1"
+  local label="$2"
+
+  if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+    die "$label must be a non-negative integer, got: $value"
+  fi
+}
+
+validate_positive_integer_nonzero() {
+  local value="$1"
+  local label="$2"
+
+  if ! [[ "$value" =~ ^[0-9]+$ ]] || (( value < 1 )); then
+    die "$label must be a positive integer, got: $value"
+  fi
+}
+
 require_directory() {
   local directory_path="$1"
   local label="$2"
@@ -675,13 +693,8 @@ if [[ -z "$OUTPUT" ]]; then
   die "-Output is required"
 fi
 
-if ! [[ "$MAX_FILES" =~ ^[0-9]+$ ]]; then
-  die "-MaxFiles must be a non-negative integer"
-fi
-
-if ! [[ "$THREADS" =~ ^[0-9]+$ ]] || (( THREADS < 1 )); then
-  die "-Threads must be a positive integer"
-fi
+validate_positive_integer "$MAX_FILES" "-MaxFiles"
+validate_positive_integer_nonzero "$THREADS" "-Threads"
 
 if (( ! USE_NAME && ! USE_DATE && ! USE_SIZE )); then
   echo "Defaulting to: Name + Date"
