@@ -392,16 +392,21 @@ function Get-SupplementalMetadata {
         return $null
     }
 
-    $metadataFileName = $file.Name + ".supplemental-metadata.json"
-    $metadataPath = Join-Path $file.Directory.FullName $metadataFileName
+    $candidatePaths = @(
+        (Join-Path $file.Directory.FullName ($file.Name + ".supplemental-metadata.json")),
+        (Join-Path $file.Directory.FullName ($file.Name + ".json")),
+        (Join-Path $file.Directory.FullName ($file.BaseName + ".json"))
+    )
 
-    if (Test-Path -LiteralPath $metadataPath) {
-        try {
-            $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
-            return $metadata
-        } catch {
-            Write-Output "Warning: Failed to parse metadata file: $metadataPath"
-            return $null
+    foreach ($metadataPath in $candidatePaths) {
+        if (Test-Path -LiteralPath $metadataPath) {
+            try {
+                $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+                return $metadata
+            } catch {
+                Write-Output "Warning: Failed to parse metadata file: $metadataPath"
+                return $null
+            }
         }
     }
 
@@ -427,6 +432,18 @@ function Convert-ToDateTimeFromMetadataValue {
         $trimmed = $Value.Trim()
         if (-not $trimmed) {
             return $null
+        }
+
+        if ($trimmed -match '^\d{10,13}$') {
+            try {
+                if ($trimmed.Length -gt 10) {
+                    return [datetimeoffset]::FromUnixTimeMilliseconds([int64]$trimmed).UtcDateTime
+                }
+
+                return [datetimeoffset]::FromUnixTimeSeconds([int64]$trimmed).UtcDateTime
+            } catch {
+                return $null
+            }
         }
 
         try {
