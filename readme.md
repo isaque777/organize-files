@@ -1,171 +1,213 @@
-# 📁 Sync Media Organizer (PowerShell)
+# Universal File Sync Organizer
 
-A powerful PowerShell script to **sync, deduplicate, and organize media files** (images & videos) across directories.
+A flexible PowerShell-based organizer for syncing, deduplicating, and sorting many different file types across directories.
 
-It supports **EXIF metadata, filename date extraction, and automatic media separation**, making it ideal for messy backups (phones, cloud, WhatsApp, etc.).
-
----
-
-## 🚀 Features
-
-* 📸 **EXIF Date Taken support** (accurate for photos)
-* 📂 **Multiple source directories** in a single run
-* 📛 **Filename date extraction** (e.g. `IMG_20160421.jpg`)
-* 🧠 Smart fallback:
-
-  * EXIF → Filename → CreationTime → LastWriteTime
-* 🖼 **Automatic media separation**
-
-  * Images → `Images/YYYY/MM`
-  * Videos → `Videos/YYYY/MM`
-* 📅 Organize by **Year / Month**
-* 🔁 **Deduplication system**
-* 📏 Optional size-based replacement
-* 🚚 **Copy by default or move with a switch**
-* 🧪 **Dry-run mode**
-* 📜 Logging support
-* 🔢 Process **limited number of files**
-* 🚫 Ignore duplicate suffix like `(1)`, `(2)`
+The main PowerShell entrypoint is `sync-files.ps1`, and `sync-files.sh` provides a Bash launcher for Linux and macOS environments that have PowerShell installed.
 
 ---
 
-## 📂 Output Structure
+## Features
 
-```
-OrganizedMedia/
+* Multiple source directories in a single run
+* Scans all files by default when no type flags are provided
+* Optional category flags for images, videos, audio, documents, archives, code, fonts, ebooks, subtitles, data, disk images, executables, design files, and 3D models
+* Broader extension coverage including RAW camera formats, macro-enabled Office files, Jupyter notebooks, CAD assets, virtual disk images, AppImages, and more
+* Optional `-IgnoreExtensions` list to skip specific extensions
+* Copy by default, or move files with `-MoveFiles`
+* Optional type-based folder separation with `-SeparateByType`
+* Optional year/month organization with `-OrganizeByDate`
+* EXIF or shell metadata date lookup when available
+* Filename date extraction fallback
+* Deduplication and optional size-based replacement logic
+* Dry-run mode, logging support, and max-file limits
+* Backward-compatible `-SeparateMedia` alias for `-SeparateByType`
+
+---
+
+## Supported Categories
+
+The script currently knows these file groups:
+
+* `-Images`
+* `-Videos`
+* `-Audio`
+* `-Documents`
+* `-Archives`
+* `-Code`
+* `-Fonts`
+* `-Ebooks`
+* `-Subtitles`
+* `-Data`
+* `-DiskImages`
+* `-Executables`
+* `-DesignFiles`
+* `-Models3D`
+
+If you do not pass any category flags, the script scans all files instead of limiting itself to known media extensions.
+
+---
+
+## Output Structure
+
+When `-SeparateByType` is enabled, files are written into category folders like these:
+
+```text
+OrganizedFiles/
   Images/
-    2016/
+    2026/
       04/
-  Videos/
-    2020/
-      12/
+  Audio/
+    2026/
+      04/
+  Documents/
+    2026/
+      04/
+  Other/
+    2026/
+      04/
 ```
 
----
-
-## ⚙️ Parameters
-
-| Parameter                | Type     | Description                               |
-| ------------------------ | -------- | ----------------------------------------- |
-| `-Source`                | string[] | One or more source directories            |
-| `-Targets`               | string[] | Target directories (for dedup comparison) |
-| `-Output`                | string   | Output directory                          |
-| `-MoveFiles`             | switch   | Move files instead of copying             |
-| `-DryRun`                | switch   | Simulate without copying or moving        |
-| `-LogFile`               | string   | Log file path                             |
-| `-UseName`               | switch   | Use filename for matching                 |
-| `-UseDate`               | switch   | Use file date for matching                |
-| `-UseSize`               | switch   | Use size for replacement logic            |
-| `-IgnoreDuplicateSuffix` | switch   | Ignore files like `file(1).jpg`           |
-| `-OrganizeByDate`        | switch   | Enable YYYY/MM structure                  |
-| `-MaxFiles`              | int      | Limit number of processed files           |
-| `-UseFileNameDate`       | switch   | Extract date from filename                |
-| `-SeparateMedia`         | switch   | Separate Images and Videos                |
+Unknown extensions go into `Other` when type separation is enabled.
 
 ---
 
-## 🧪 Usage Examples
+## Parameters
 
-### 🔍 Dry Run (Safe Test)
+### Core Options
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `-Source` | `string[]` | One or more source directories |
+| `-Targets` | `string[]` | Target directories used for dedup comparison |
+| `-Output` | `string` | Output directory |
+| `-MoveFiles` | `switch` | Move files instead of copying them |
+| `-DryRun` | `switch` | Simulate the run without copying or moving |
+| `-LogFile` | `string` | Optional log file path |
+| `-UseName` | `switch` | Use the filename in dedup matching |
+| `-UseDate` | `switch` | Use the file timestamp in dedup matching |
+| `-UseSize` | `switch` | Use file size when deciding replacements |
+| `-IgnoreDuplicateSuffix` | `switch` | Ignore files like `file(1).jpg` |
+| `-IgnoreExtensions` | `string[]` | Skip extensions such as `.tmp`, `bak`, or `log` |
+| `-SeparateByType` | `switch` | Create category folders like `Images`, `Audio`, `Documents`, etc. |
+| `-OrganizeByDate` | `switch` | Add `YYYY/MM` folders under the output path |
+| `-MaxFiles` | `int` | Limit the number of processed files |
+| `-UseFileNameDate` | `switch` | Try to extract a date from filenames like `IMG_20160421.jpg` |
+
+### Category Flags
+
+| Parameter | Description |
+| --------- | ----------- |
+| `-Images` | Process common image and camera raw formats |
+| `-Videos` | Process common video formats |
+| `-Audio` | Process music and audio formats |
+| `-Documents` | Process office, text, markdown, and document files |
+| `-Archives` | Process compressed archive formats |
+| `-Code` | Process source code and script files |
+| `-Fonts` | Process font files |
+| `-Ebooks` | Process ebook and comic-book archive formats |
+| `-Subtitles` | Process subtitle and caption files |
+| `-Data` | Process structured data and database files |
+| `-DiskImages` | Process ISO and virtual disk images |
+| `-Executables` | Process installer and executable package files |
+| `-DesignFiles` | Process design project files |
+| `-Models3D` | Process 3D model and CAD files |
+
+---
+
+## Usage Examples
+
+### Dry Run for Selected File Types
 
 ```powershell
-.\sync-media.ps1 `
+.\sync-files.ps1 `
   -Source "E:\cloud","F:\camera-roll" `
-  -Targets "D:\Photos","D:\Videos" `
-  -Output "D:\OrganizedMedia" `
+  -Targets "D:\Library" `
+  -Output "D:\OrganizedFiles" `
+  -Images -Videos -Audio `
+  -SeparateByType `
   -OrganizeByDate `
-  -SeparateMedia `
   -UseFileNameDate `
   -DryRun
 ```
 
----
-
-### ⚡ Real Execution
+### Scan Everything When No Flags Are Provided
 
 ```powershell
-.\sync-media.ps1 `
-  -Source "E:\cloud","F:\camera-roll" `
-  -Targets "D:\Photos","D:\Videos" `
-  -Output "D:\OrganizedMedia" `
-  -OrganizeByDate `
-  -SeparateMedia `
-  -UseFileNameDate
+.\sync-files.ps1 `
+  -Source "E:\mixed-backup","F:\desktop-export" `
+  -Targets "D:\Library" `
+  -Output "D:\OrganizedFiles" `
+  -SeparateByType `
+  -IgnoreExtensions ".tmp","bak","log"
 ```
 
-### 🚚 Move Files Instead of Copying
+### Move Archive Files Instead of Copying
 
 ```powershell
-.\sync-media.ps1 `
-  -Source "E:\cloud","F:\camera-roll" `
-  -Targets "D:\Photos","D:\Videos" `
-  -Output "D:\OrganizedMedia" `
-  -OrganizeByDate `
-  -SeparateMedia `
-  -UseFileNameDate `
+.\sync-files.ps1 `
+  -Source "E:\downloads" `
+  -Targets "D:\Library" `
+  -Output "D:\OrganizedFiles" `
+  -Archives `
+  -SeparateByType `
   -MoveFiles
 ```
 
----
+### Linux or macOS Launcher
 
-### 🔢 Process Only 100 Files
-
-```powershell
--MaxFiles 100
+```bash
+./sync-files.sh \
+  -Source "/mnt/cloud" "/mnt/backup" \
+  -Targets "/srv/library" \
+  -Output "/srv/organized-files" \
+  -Documents -Archives \
+  -IgnoreExtensions ".tmp" ".bak" \
+  -SeparateByType
 ```
 
+The Bash launcher forwards the same arguments to `sync-files.ps1`.
+
 ---
 
-## 🧠 How Date Detection Works
+## How Date Detection Works
 
 Priority order:
 
-1. 📸 EXIF (Date Taken)
-2. 📛 Filename (if enabled)
-3. 📁 CreationTime
-4. 🕒 LastWriteTime
+1. EXIF or shell metadata when available
+2. Filename date extraction when `-UseFileNameDate` is enabled
+3. `CreationTime`
+4. `LastWriteTime`
 
 ---
 
-## 📝 Example Log Output
+## Example Log Output
 
+```text
+DATE: report.pdf | Selected=2026-04-28 | Created=2026-04-28 | Modified=2026-04-28
+COPY: D:\source\report.pdf -> D:\OrganizedFiles\Documents\2026\04\report.pdf
 ```
-DATE: IMG_1234.jpg | Selected=2016-04-21 | Created=2026-04-28 | Modified=2004-12-18
-COPY: E:\cloud\IMG_1234.jpg -> D:\OrganizedMedia\Images\2016\04\IMG_1234.jpg
-```
 
 ---
 
-## ⚠️ Known Limitations
+## Known Limitations
 
-* Files without EXIF or date in filename fall back to filesystem dates
-* Some apps (e.g. WhatsApp, ZIP tools) strip metadata
-* Windows “Date” column may not match filesystem timestamps
+* EXIF and shell metadata lookup is primarily available on Windows. On Linux and macOS, the script falls back to filename and filesystem timestamps.
+* Unknown extensions can still be copied when no category flags are used, but they are only grouped into a named category if the script recognizes their extension.
+* Files without EXIF or filename dates fall back to filesystem dates.
+* Some apps strip metadata, so timestamps may not reflect when a photo or video was originally created.
 
 ---
 
-## 🛠 Requirements
+## Requirements
 
-* Windows PowerShell 5+ or PowerShell 7+
+* Windows PowerShell 5+ or PowerShell 7+ on Windows
+* PowerShell 7+ on Linux or macOS
+* Bash for `sync-files.sh`
 * No external dependencies
 
 ---
 
-## 🔮 Future Improvements
-
-* 📅 WhatsApp filename detection (`IMG-YYYYMMDD-WAxxxx`)
-* 🧹 Fix corrupted filenames (`_25C2_`)
-* ⚡ Parallel processing for performance
-* 🧠 AI-based duplicate detection
-
----
-
-## 🤝 Contributing
-
-Pull requests are welcome. For major changes, please open an issue first.
-
----
-
-## 📜 License
+## License
 
 MIT License
+

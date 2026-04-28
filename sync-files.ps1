@@ -17,12 +17,40 @@ param(
 
     [switch]$IgnoreDuplicateSuffix,
     [switch]$OrganizeByDate,
+    [Alias("SeparateMedia")]
+    [switch]$SeparateByType,
 
     [int]$MaxFiles = 0,
 
     [switch]$UseFileNameDate,
-    [switch]$SeparateMedia,
-    [switch]$MoveFiles
+    [switch]$MoveFiles,
+    [string[]]$IgnoreExtensions = @(),
+
+    [Alias("Image")]
+    [switch]$Images,
+    [Alias("Video")]
+    [switch]$Videos,
+    [switch]$Audio,
+    [Alias("Document")]
+    [switch]$Documents,
+    [Alias("Archive")]
+    [switch]$Archives,
+    [switch]$Code,
+    [Alias("Font")]
+    [switch]$Fonts,
+    [Alias("Ebook")]
+    [switch]$Ebooks,
+    [Alias("Subtitle")]
+    [switch]$Subtitles,
+    [switch]$Data,
+    [Alias("DiskImage")]
+    [switch]$DiskImages,
+    [Alias("Executable")]
+    [switch]$Executables,
+    [Alias("Design")]
+    [switch]$DesignFiles,
+    [Alias("Model3D")]
+    [switch]$Models3D
 )
 
 # ================================
@@ -34,18 +62,179 @@ if (-not ($UseName -or $UseDate -or $UseSize)) {
     $UseDate = $true
 }
 
-$imageExt = @(".jpg",".jpeg",".png",".gif",".bmp",".webp")
-$videoExt = @(".mp4",".mov",".avi",".mkv",".wmv")
-$extensions = $imageExt + $videoExt
+$categoryDefinitions = [ordered]@{
+    Images = @{
+        Folder = "Images"
+        Extensions = @(".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".heic", ".heif", ".raw", ".cr2", ".nef", ".arw", ".dng", ".orf", ".rw2", ".svg", ".ico", ".avif", ".jfif", ".apng", ".jxl", ".qoi", ".raf", ".sr2", ".srw", ".pef", ".erf", ".kdc", ".mrw", ".x3f", ".mef", ".iiq", ".nrw")
+    }
+    Videos = @{
+        Folder = "Videos"
+        Extensions = @(".mp4", ".mov", ".avi", ".mkv", ".wmv", ".m4v", ".mpg", ".mpeg", ".webm", ".3gp", ".mts", ".m2ts", ".ts", ".flv", ".f4v", ".asf", ".rmvb", ".ogv", ".ogm", ".dv", ".vob", ".mxf", ".tod", ".lrv")
+    }
+    Audio = @{
+        Folder = "Audio"
+        Extensions = @(".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".oga", ".opus", ".wma", ".aiff", ".aif", ".alac", ".mid", ".midi", ".amr", ".weba", ".mka", ".ra", ".rm", ".spx", ".mp2", ".mpa", ".ac3", ".dts")
+    }
+    Documents = @{
+        Folder = "Documents"
+        Extensions = @(".pdf", ".doc", ".docx", ".docm", ".dot", ".dotx", ".dotm", ".xls", ".xlsx", ".xlsm", ".xlt", ".xltx", ".xltm", ".ppt", ".pptx", ".pptm", ".pps", ".ppsx", ".pot", ".potx", ".potm", ".txt", ".rtf", ".odt", ".ods", ".odp", ".pages", ".numbers", ".key", ".md", ".tex", ".one", ".onepkg", ".xps", ".oxps", ".wps", ".wpd", ".abw", ".ps")
+    }
+    Archives = @{
+        Folder = "Archives"
+        Extensions = @(".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".tgz", ".tbz2", ".txz", ".cab", ".lz", ".lzma", ".zst", ".arj", ".ace", ".pak", ".sit", ".sitx", ".war")
+    }
+    Code = @{
+        Folder = "Code"
+        Extensions = @(".ps1", ".psm1", ".psd1", ".sh", ".bash", ".zsh", ".fish", ".bat", ".cmd", ".py", ".ipynb", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".java", ".c", ".cpp", ".h", ".hpp", ".cc", ".cxx", ".cs", ".go", ".rs", ".rb", ".php", ".swift", ".kt", ".kts", ".scala", ".groovy", ".gradle", ".dart", ".lua", ".pl", ".pm", ".sql", ".r", ".rmd", ".jl", ".nim", ".clj", ".cljs", ".asm", ".s", ".f", ".f90")
+    }
+    Fonts = @{
+        Folder = "Fonts"
+        Extensions = @(".ttf", ".otf", ".woff", ".woff2", ".eot", ".ttc", ".fon")
+    }
+    Ebooks = @{
+        Folder = "Ebooks"
+        Extensions = @(".epub", ".mobi", ".azw", ".azw3", ".fb2", ".cbz", ".cbr", ".djvu", ".ibooks", ".lit")
+    }
+    Subtitles = @{
+        Folder = "Subtitles"
+        Extensions = @(".srt", ".sub", ".ass", ".ssa", ".vtt", ".ttml", ".sbv", ".dfxp")
+    }
+    Data = @{
+        Folder = "Data"
+        Extensions = @(".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".geojson", ".xml", ".yaml", ".yml", ".toml", ".ini", ".db", ".sqlite", ".sqlite3", ".parquet", ".feather", ".avro", ".orc", ".bson", ".npy", ".h5", ".hdf5", ".mat", ".pkl", ".pickle", ".sav")
+    }
+    DiskImages = @{
+        Folder = "DiskImages"
+        Extensions = @(".iso", ".img", ".dmg", ".vhd", ".vhdx", ".vmdk", ".qcow2", ".toast", ".cue", ".nrg")
+    }
+    Executables = @{
+        Folder = "Executables"
+        Extensions = @(".exe", ".msi", ".msix", ".appx", ".apk", ".deb", ".rpm", ".pkg", ".bin", ".appimage", ".jar", ".com", ".run", ".scr", ".gadget", ".command")
+    }
+    DesignFiles = @{
+        Folder = "DesignFiles"
+        Extensions = @(".psd", ".psb", ".ai", ".eps", ".indd", ".xd", ".fig", ".sketch", ".xcf", ".kra", ".afdesign", ".afphoto", ".afpub", ".cdr", ".dwg", ".dxf")
+    }
+    Models3D = @{
+        Folder = "3DModels"
+        Extensions = @(".stl", ".obj", ".fbx", ".dae", ".glb", ".gltf", ".3ds", ".blend", ".ply", ".step", ".stp", ".iges", ".igs", ".usdz", ".x3d", ".wrl", ".vrml", ".ma", ".mb", ".max")
+    }
+}
+
+function Normalize-Extension {
+    param([string]$Extension)
+
+    if ([string]::IsNullOrWhiteSpace($Extension)) {
+        return ""
+    }
+
+    $normalizedExtension = $Extension.Trim().ToLower()
+    if (-not $normalizedExtension.StartsWith(".")) {
+        $normalizedExtension = ".{0}" -f $normalizedExtension
+    }
+
+    return $normalizedExtension
+}
+
+$extensionToCategory = @{}
+foreach ($categoryName in $categoryDefinitions.Keys) {
+    $normalizedExtensions = @()
+
+    foreach ($extension in $categoryDefinitions[$categoryName].Extensions) {
+        $normalizedExtension = Normalize-Extension $extension
+        if (-not $normalizedExtension) {
+            continue
+        }
+
+        $normalizedExtensions += $normalizedExtension
+
+        if (-not $extensionToCategory.ContainsKey($normalizedExtension)) {
+            $extensionToCategory[$normalizedExtension] = $categoryName
+        }
+    }
+
+    $categoryDefinitions[$categoryName].Extensions = $normalizedExtensions | Select-Object -Unique
+}
+
+$selectedCategories = @()
+if ($Images) { $selectedCategories += "Images" }
+if ($Videos) { $selectedCategories += "Videos" }
+if ($Audio) { $selectedCategories += "Audio" }
+if ($Documents) { $selectedCategories += "Documents" }
+if ($Archives) { $selectedCategories += "Archives" }
+if ($Code) { $selectedCategories += "Code" }
+if ($Fonts) { $selectedCategories += "Fonts" }
+if ($Ebooks) { $selectedCategories += "Ebooks" }
+if ($Subtitles) { $selectedCategories += "Subtitles" }
+if ($Data) { $selectedCategories += "Data" }
+if ($DiskImages) { $selectedCategories += "DiskImages" }
+if ($Executables) { $selectedCategories += "Executables" }
+if ($DesignFiles) { $selectedCategories += "DesignFiles" }
+if ($Models3D) { $selectedCategories += "Models3D" }
+
+$hasCategoryFilters = $selectedCategories.Count -gt 0
+$includedExtensions = @{}
+if ($hasCategoryFilters) {
+    foreach ($categoryName in $selectedCategories | Select-Object -Unique) {
+        foreach ($extension in $categoryDefinitions[$categoryName].Extensions) {
+            $includedExtensions[$extension] = $true
+        }
+    }
+}
+
+$ignoredExtensionsSet = @{}
+foreach ($extension in $IgnoreExtensions) {
+    $normalizedExtension = Normalize-Extension $extension
+    if ($normalizedExtension) {
+        $ignoredExtensionsSet[$normalizedExtension] = $true
+    }
+}
 
 $duplicatePattern = '\(\d+\)(?=\.[^.]+$)'
 
 function Should-SkipFile {
     param($file)
+
+    $normalizedExtension = Normalize-Extension $file.Extension
+    if ($normalizedExtension -and $ignoredExtensionsSet.ContainsKey($normalizedExtension)) {
+        return $true
+    }
+
     if ($IgnoreDuplicateSuffix -and ($file.Name -match $duplicatePattern)) {
         return $true
     }
+
     return $false
+}
+
+function Should-IncludeFile {
+    param($file)
+
+    if (Should-SkipFile $file) {
+        return $false
+    }
+
+    if (-not $hasCategoryFilters) {
+        return $true
+    }
+
+    $normalizedExtension = Normalize-Extension $file.Extension
+    return $includedExtensions.ContainsKey($normalizedExtension)
+}
+
+function Get-CategoryNameForFile {
+    param($file)
+
+    $normalizedExtension = Normalize-Extension $file.Extension
+    if (-not $normalizedExtension) {
+        return $null
+    }
+
+    if ($extensionToCategory.ContainsKey($normalizedExtension)) {
+        return $extensionToCategory[$normalizedExtension]
+    }
+
+    return $null
 }
 
 function Get-FileKey {
@@ -86,7 +275,12 @@ function Invoke-Transfer {
 # ================================
 # DATE FUNCTIONS
 # ================================
-$shell = New-Object -ComObject Shell.Application
+$shell = $null
+try {
+    if (($PSVersionTable.PSEdition -eq "Desktop") -or ($env:OS -eq "Windows_NT")) {
+        $shell = New-Object -ComObject Shell.Application
+    }
+} catch {}
 
 function Get-DateTakenIndex($folder) {
     for ($i=0; $i -lt 50; $i++) {
@@ -121,19 +315,23 @@ function Get-DateFromFileName($name) {
 
 function Get-BestDate($file) {
 
-    # 1. EXIF (best for photos)
-    try {
-        $folder = $shell.Namespace($file.Directory.FullName)
-        $item   = $folder.ParseName($file.Name)
+    $categoryName = Get-CategoryNameForFile $file
 
-        $idx = Get-DateTakenIndex $folder
-        if ($idx -ne $null) {
-            $dateTaken = $folder.GetDetailsOf($item, $idx)
-            if ($dateTaken) {
-                try { return [datetime]$dateTaken } catch {}
+    # 1. EXIF (best for photos)
+    if ($shell -and ($categoryName -in @("Images", "Videos"))) {
+        try {
+            $folder = $shell.Namespace($file.Directory.FullName)
+            $item   = $folder.ParseName($file.Name)
+
+            $idx = Get-DateTakenIndex $folder
+            if ($idx -ne $null) {
+                $dateTaken = $folder.GetDetailsOf($item, $idx)
+                if ($dateTaken) {
+                    try { return [datetime]$dateTaken } catch {}
+                }
             }
-        }
-    } catch {}
+        } catch {}
+    }
 
     # 2. Filename (optional)
     if ($UseFileNameDate) {
@@ -155,8 +353,7 @@ $targetIndex = @{}
 
 foreach ($dir in $Targets) {
     Get-ChildItem $dir -Recurse -File | Where-Object {
-        ($extensions -contains $_.Extension.ToLower()) -and
-        (-not (Should-SkipFile $_))
+        Should-IncludeFile $_
     } | ForEach-Object {
 
         $key = Get-FileKey $_
@@ -171,11 +368,14 @@ foreach ($dir in $Targets) {
 # ================================
 # SCAN SOURCE
 # ================================
-Write-Output "Scanning sources..."
+if ($hasCategoryFilters) {
+    Write-Output "Scanning selected categories: $($selectedCategories -join ', ')"
+} else {
+    Write-Output "Scanning all files..."
+}
 
 $files = Get-ChildItem $Source -Recurse -File | Where-Object {
-    ($extensions -contains $_.Extension.ToLower()) -and
-    (-not (Should-SkipFile $_))
+    Should-IncludeFile $_
 }
 
 if ($MaxFiles -gt 0) {
@@ -212,13 +412,14 @@ foreach ($file in $files) {
 
     # ROOT
     $destRoot = $Output
+    $categoryName = Get-CategoryNameForFile $file
 
-    # Separate media
-    if ($SeparateMedia) {
-        if ($imageExt -contains $file.Extension.ToLower()) {
-            $destRoot = Join-Path $destRoot "Images"
-        } elseif ($videoExt -contains $file.Extension.ToLower()) {
-            $destRoot = Join-Path $destRoot "Videos"
+    # Separate by file type
+    if ($SeparateByType) {
+        if ($categoryName) {
+            $destRoot = Join-Path $destRoot $categoryDefinitions[$categoryName].Folder
+        } else {
+            $destRoot = Join-Path $destRoot "Other"
         }
     }
 
@@ -226,7 +427,7 @@ foreach ($file in $files) {
     if ($OrganizeByDate) {
         $year  = $bestDate.ToString("yyyy")
         $month = $bestDate.ToString("MM")
-        $destRoot = Join-Path $destRoot "$year\$month"
+        $destRoot = Join-Path (Join-Path $destRoot $year) $month
     }
 
     $destinationPath = Join-Path $destRoot $file.Name
@@ -245,7 +446,7 @@ foreach ($file in $files) {
             continue
         }
 
-        $logLine = "$replaceVerb: $($file.FullName) -> $destinationPath"
+        $logLine = "${replaceVerb}: $($file.FullName) -> $destinationPath"
 
         if ($DryRun) {
             Write-Output "[SIMULATION] $logLine"
@@ -258,7 +459,7 @@ foreach ($file in $files) {
 
     } else {
 
-        $logLine = "$transferVerb: $($file.FullName) -> $destinationPath"
+        $logLine = "${transferVerb}: $($file.FullName) -> $destinationPath"
 
         if ($DryRun) {
             Write-Output "[SIMULATION] $logLine"
