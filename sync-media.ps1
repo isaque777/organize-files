@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$Source,
+    [string[]]$Source,
 
     [Parameter(Mandatory=$true)]
     [string[]]$Targets,
@@ -21,7 +21,8 @@ param(
     [int]$MaxFiles = 0,
 
     [switch]$UseFileNameDate,
-    [switch]$SeparateMedia
+    [switch]$SeparateMedia,
+    [switch]$MoveFiles
 )
 
 # ================================
@@ -53,6 +54,33 @@ function Get-FileKey {
     if ($UseName) { $parts += $file.Name.ToLower() }
     if ($UseDate) { $parts += $file.LastWriteTimeUtc.Ticks }
     return ($parts -join "|")
+}
+
+function Invoke-Transfer {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+
+        [Parameter(Mandatory=$true)]
+        [string]$Destination,
+
+        [switch]$Force
+    )
+
+    $transferParams = @{
+        Path = $Path
+        Destination = $Destination
+    }
+
+    if ($Force) {
+        $transferParams.Force = $true
+    }
+
+    if ($MoveFiles) {
+        Move-Item @transferParams
+    } else {
+        Copy-Item @transferParams
+    }
 }
 
 # ================================
@@ -143,7 +171,7 @@ foreach ($dir in $Targets) {
 # ================================
 # SCAN SOURCE
 # ================================
-Write-Output "Scanning source..."
+Write-Output "Scanning sources..."
 
 $files = Get-ChildItem $Source -Recurse -File | Where-Object {
     ($extensions -contains $_.Extension.ToLower()) -and
@@ -156,9 +184,12 @@ if ($MaxFiles -gt 0) {
 
 $total = $files.Count
 $current = 0
-$copied = 0
+$transferred = 0
 $replaced = 0
 $skipped = 0
+$transferVerb = if ($MoveFiles) { "MOVE" } else { "COPY" }
+$replaceVerb = if ($MoveFiles) { "MOVE-REPLACE" } else { "REPLACE" }
+$transferSummaryLabel = if ($MoveFiles) { "Moved" } else { "Copied" }
 
 # ================================
 # PROCESS
@@ -214,28 +245,28 @@ foreach ($file in $files) {
             continue
         }
 
-        $logLine = "REPLACE: $($file.FullName) -> $destinationPath"
+        $logLine = "$replaceVerb: $($file.FullName) -> $destinationPath"
 
         if ($DryRun) {
             Write-Output "[SIMULATION] $logLine"
         } else {
             New-Item -ItemType Directory -Path $destRoot -Force | Out-Null
-            Copy-Item $file.FullName $destinationPath -Force
+            Invoke-Transfer -Path $file.FullName -Destination $destinationPath -Force
             Write-Output $logLine
             $replaced++
         }
 
     } else {
 
-        $logLine = "COPY: $($file.FullName) -> $destinationPath"
+        $logLine = "$transferVerb: $($file.FullName) -> $destinationPath"
 
         if ($DryRun) {
             Write-Output "[SIMULATION] $logLine"
         } else {
             New-Item -ItemType Directory -Path $destRoot -Force | Out-Null
-            Copy-Item $file.FullName $destinationPath
+            Invoke-Transfer -Path $file.FullName -Destination $destinationPath
             Write-Output $logLine
-            $copied++
+            $transferred++
         }
     }
 
@@ -248,7 +279,7 @@ foreach ($file in $files) {
 Write-Output ""
 Write-Output "========== SUMMARY =========="
 Write-Output "Total scanned : $total"
-Write-Output "Copied        : $copied"
+Write-Output ("{0,-13}: {1}" -f $transferSummaryLabel, $transferred)
 Write-Output "Replaced      : $replaced"
 Write-Output "Skipped       : $skipped"
 Write-Output "============================="

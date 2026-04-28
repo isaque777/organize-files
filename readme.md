@@ -9,6 +9,7 @@ It supports **EXIF metadata, filename date extraction, and automatic media separ
 ## 🚀 Features
 
 * 📸 **EXIF Date Taken support** (accurate for photos)
+* 📂 **Multiple source directories** in a single run
 * 📛 **Filename date extraction** (e.g. `IMG_20160421.jpg`)
 * 🧠 Smart fallback:
 
@@ -20,6 +21,7 @@ It supports **EXIF metadata, filename date extraction, and automatic media separ
 * 📅 Organize by **Year / Month**
 * 🔁 **Deduplication system**
 * 📏 Optional size-based replacement
+* 🚚 **Copy by default or move with a switch**
 * 🧪 **Dry-run mode**
 * 📜 Logging support
 * 🔢 Process **limited number of files**
@@ -45,10 +47,11 @@ OrganizedMedia/
 
 | Parameter                | Type     | Description                               |
 | ------------------------ | -------- | ----------------------------------------- |
-| `-Source`                | string   | Source directory                          |
+| `-Source`                | string[] | One or more source directories            |
 | `-Targets`               | string[] | Target directories (for dedup comparison) |
 | `-Output`                | string   | Output directory                          |
-| `-DryRun`                | switch   | Simulate without copying                  |
+| `-MoveFiles`             | switch   | Move files instead of copying             |
+| `-DryRun`                | switch   | Simulate without copying or moving        |
 | `-LogFile`               | string   | Log file path                             |
 | `-UseName`               | switch   | Use filename for matching                 |
 | `-UseDate`               | switch   | Use file date for matching                |
@@ -67,7 +70,7 @@ OrganizedMedia/
 
 ```powershell
 .\sync-media.ps1 `
-  -Source "E:\cloud" `
+  -Source "E:\cloud","F:\camera-roll" `
   -Targets "D:\Photos","D:\Videos" `
   -Output "D:\OrganizedMedia" `
   -OrganizeByDate `
@@ -82,12 +85,25 @@ OrganizedMedia/
 
 ```powershell
 .\sync-media.ps1 `
-  -Source "E:\cloud" `
+  -Source "E:\cloud","F:\camera-roll" `
   -Targets "D:\Photos","D:\Videos" `
   -Output "D:\OrganizedMedia" `
   -OrganizeByDate `
   -SeparateMedia `
   -UseFileNameDate
+```
+
+### 🚚 Move Files Instead of Copying
+
+```powershell
+.\sync-media.ps1 `
+  -Source "E:\cloud","F:\camera-roll" `
+  -Targets "D:\Photos","D:\Videos" `
+  -Output "D:\OrganizedMedia" `
+  -OrganizeByDate `
+  -SeparateMedia `
+  -UseFileNameDate `
+  -MoveFiles
 ```
 
 ---
