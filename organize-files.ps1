@@ -106,6 +106,44 @@ function Get-CategoryDefinitions {
 
 $categoryDefinitions = Get-CategoryDefinitions -Path (Join-Path $scriptRoot "category-definitions.tsv")
 
+function Get-FileNameDateFormats {
+    param([Parameter(Mandatory=$true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Filename date formats file not found: $Path"
+    }
+
+    $formats = @()
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        $format = $line.Trim()
+        if (-not $format -or $format.StartsWith("#")) {
+            continue
+        }
+
+        $formats += $format
+    }
+
+    if ($formats.Count -eq 0) {
+        throw "Filename date formats file is empty: $Path"
+    }
+
+    return ,$formats
+}
+
+function Convert-DateFormatToPattern {
+    param([Parameter(Mandatory=$true)][string]$Format)
+
+    $pattern = [regex]::Escape($Format)
+    $pattern = $pattern.Replace("YYYY", "(20\d{2})")
+    $pattern = $pattern.Replace("MM", "([0-1]\d)")
+    $pattern = $pattern.Replace("DD", "([0-3]\d)")
+    return "\b{0}\b" -f $pattern
+}
+
+$fileNameDatePatterns = foreach ($format in (Get-FileNameDateFormats -Path (Join-Path $scriptRoot "filename-date-formats.txt"))) {
+    Convert-DateFormatToPattern -Format $format
+}
+
 function Normalize-Extension {
     param([string]$Extension)
 
@@ -278,13 +316,7 @@ function Get-DateTakenIndex($folder) {
 
 function Get-DateFromFileName($name) {
 
-    $patterns = @(
-        '\b(20\d{2})(\d{2})(\d{2})\b',        # 20160421
-        '\b(20\d{2})-(\d{2})-(\d{2})\b',      # 2016-04-21
-        '\b(20\d{2})_(\d{2})_(\d{2})\b'       # 2016_04_21
-    )
-
-    foreach ($pattern in $patterns) {
+    foreach ($pattern in $fileNameDatePatterns) {
         if ($name -match $pattern) {
             try {
                 $y = $matches[1]

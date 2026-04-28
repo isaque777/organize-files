@@ -17,7 +17,7 @@ The CLI entrypoints are `organize-files.ps1` for PowerShell and `organize-files.
 * Optional type-based folder separation with `-SeparateByType`
 * Optional year/month organization with `-OrganizeByDate`
 * Command-line interface with matching PowerShell and Bash entrypoints
-* Shared category-definition file consumed by both entrypoints to keep file-type coverage aligned
+* Shared category-definition and filename-date format files consumed by both entrypoints to keep rules aligned
 * Native Bash implementation for Linux and macOS, not just a PowerShell wrapper
 * EXIF or shell metadata date lookup when available
 * Filename date extraction fallback

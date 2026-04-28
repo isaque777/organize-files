@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CATEGORY_DEFINITIONS_FILE="$SCRIPT_DIR/category-definitions.tsv"
+FILENAME_DATE_FORMATS_FILE="$SCRIPT_DIR/filename-date-formats.txt"
 
 OS_NAME="$(uname -s)"
 EXIFTOOL_AVAILABLE=0
@@ -16,6 +17,7 @@ declare -a TARGET_DIRS=()
 declare -a IGNORE_EXTENSION_VALUES=()
 declare -a FILES=()
 declare -a CATEGORY_ORDER=()
+declare -a FILENAME_DATE_FORMATS=()
 
 declare -A CATEGORY_FOLDERS=()
 declare -A CATEGORY_EXTENSIONS=()
@@ -160,6 +162,37 @@ load_category_definitions() {
   done < "$definitions_file"
 }
 
+load_filename_date_formats() {
+  local formats_file="$1"
+  local line trimmed_line
+
+  [[ -f "$formats_file" ]] || die "Filename date formats file not found: $formats_file"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed_line="${line#"${line%%[![:space:]]*}"}"
+    trimmed_line="${trimmed_line%"${trimmed_line##*[![:space:]]}"}"
+
+    if [[ -z "$trimmed_line" || "$trimmed_line" == \#* ]]; then
+      continue
+    fi
+
+    FILENAME_DATE_FORMATS+=("$trimmed_line")
+  done < "$formats_file"
+
+  (( ${#FILENAME_DATE_FORMATS[@]} > 0 )) || die "Filename date formats file is empty: $formats_file"
+}
+
+date_format_to_regex() {
+  local format="$1"
+  local regex="$format"
+
+  regex="${regex//YYYY/(20[0-9]{2})}"
+  regex="${regex//MM/([0-1][0-9])}"
+  regex="${regex//DD/([0-3][0-9])}"
+
+  printf '%s' "$regex"
+}
+
 select_category() {
   SELECTED_CATEGORIES["$1"]=1
 }
@@ -270,23 +303,19 @@ get_date_from_filename_epoch() {
   local month=""
   local day=""
 
-  if [[ "$name" =~ (20[0-9]{2})([0-1][0-9])([0-3][0-9]) ]]; then
-    year="${BASH_REMATCH[1]}"
-    month="${BASH_REMATCH[2]}"
-    day="${BASH_REMATCH[3]}"
-  elif [[ "$name" =~ (20[0-9]{2})-([0-1][0-9])-([0-3][0-9]) ]]; then
-    year="${BASH_REMATCH[1]}"
-    month="${BASH_REMATCH[2]}"
-    day="${BASH_REMATCH[3]}"
-  elif [[ "$name" =~ (20[0-9]{2})_([0-1][0-9])_([0-3][0-9]) ]]; then
-    year="${BASH_REMATCH[1]}"
-    month="${BASH_REMATCH[2]}"
-    day="${BASH_REMATCH[3]}"
-  else
-    return 1
-  fi
+  local date_format regex_pattern
+  for date_format in "${FILENAME_DATE_FORMATS[@]}"; do
+    regex_pattern="$(date_format_to_regex "$date_format")"
+    if [[ "$name" =~ $regex_pattern ]]; then
+      year="${BASH_REMATCH[1]}"
+      month="${BASH_REMATCH[2]}"
+      day="${BASH_REMATCH[3]}"
+      date_components_to_epoch "$year" "$month" "$day"
+      return 0
+    fi
+  done
 
-  date_components_to_epoch "$year" "$month" "$day"
+  return 1
 }
 
 get_metadata_date_epoch() {
@@ -473,6 +502,7 @@ require_directory() {
 }
 
 load_category_definitions "$CATEGORY_DEFINITIONS_FILE"
+load_filename_date_formats "$FILENAME_DATE_FORMATS_FILE"
 
 while (( $# > 0 )); do
   case "$1" in

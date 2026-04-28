@@ -1,0 +1,4 @@
+# Supported filename date formats
+YYYYMMDD
+YYYY-MM-DD
+YYYY_MM_DD
