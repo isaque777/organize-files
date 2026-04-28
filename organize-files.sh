@@ -559,6 +559,20 @@ extract_nested_timestamp_value() {
   printf '%s' "$object_snippet" | sed -nE 's/.*"timestamp"[[:space:]]*:[[:space:]]*"?([0-9]{10,13})"?.*/\1/p' | head -n 1
 }
 
+extract_nested_formatted_value() {
+  local metadata_json="$1"
+  local field_name="$2"
+  local compact object_snippet
+
+  compact="$(printf '%s' "$metadata_json" | tr -d '\r\n')"
+  object_snippet="$(printf '%s' "$compact" | grep -oE "\"$field_name\"[[:space:]]*:[[:space:]]*\{[^}]*\}" | head -n 1 || true)"
+  if [[ -z "$object_snippet" ]]; then
+    return 1
+  fi
+
+  printf '%s' "$object_snippet" | sed -nE 's/.*"formatted"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n 1
+}
+
 extract_metadata_field_epoch() {
   local metadata_json="$1"
   local field_name="$2"
@@ -582,6 +596,12 @@ extract_metadata_field_epoch() {
     return $?
   fi
 
+  candidate="$(extract_nested_formatted_value "$metadata_json" "$field_name" || true)"
+  if [[ -n "$candidate" ]]; then
+    parse_datetime_to_epoch "$candidate"
+    return $?
+  fi
+
   return 1
 }
 
@@ -589,7 +609,7 @@ get_primary_supplemental_epoch_from_json() {
   local metadata_json="$1"
   local key epoch
 
-  for key in CreationTime LastWriteTime creationTime lastWriteTime photoTakenTime modificationTime; do
+  for key in CreationTime LastWriteTime creationTime lastWriteTime photoTakenTime modificationTime photoLastModifiedTime; do
     if epoch="$(extract_metadata_field_epoch "$metadata_json" "$key")"; then
       printf '%s' "$epoch"
       return 0
