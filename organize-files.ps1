@@ -344,9 +344,25 @@ function Get-DateFromFileName($name) {
 
 function Get-BestDate($file) {
 
+    # 0. Supplemental metadata (highest priority when enabled)
+    if ($UseSupplementalMetadata) {
+        $supplementalMetadata = Get-SupplementalMetadata $file
+        if ($supplementalMetadata) {
+            if ($supplementalMetadata.CreationTime) {
+                $creationDate = Convert-ToDateTimeFromMetadataValue -Value $supplementalMetadata.CreationTime
+                if ($creationDate) { return $creationDate }
+            }
+
+            if ($supplementalMetadata.LastWriteTime) {
+                $writeDate = Convert-ToDateTimeFromMetadataValue -Value $supplementalMetadata.LastWriteTime
+                if ($writeDate) { return $writeDate }
+            }
+        }
+    }
+
     $categoryName = Get-CategoryNameForFile $file
 
-    # 1. EXIF/Metadata (best for photos and videos)
+    # 1. EXIF/Embedded metadata (best for photos and videos)
     if ($UseMetadataDate -and $shell -and ($categoryName -in @("Images", "Videos"))) {
         try {
             $folder = $shell.Namespace($file.Directory.FullName)

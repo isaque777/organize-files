@@ -455,7 +455,14 @@ invoke_transfer() {
 
 get_best_date_epoch() {
   local file_path="$1"
-  local category_name metadata_epoch filename_epoch creation_epoch
+  local category_name supplemental_epoch metadata_epoch filename_epoch creation_epoch
+
+  if (( USE_SUPPLEMENTAL_METADATA )); then
+    if supplemental_epoch="$(get_supplemental_date_epoch "$file_path")"; then
+      printf '%s' "$supplemental_epoch"
+      return 0
+    fi
+  fi
 
   category_name="$(get_category_name_for_file "$file_path" || true)"
 
@@ -480,6 +487,133 @@ get_best_date_epoch() {
   fi
 
   get_mtime_epoch "$file_path"
+}
+
+parse_datetime_to_epoch() {
+  local value="$1"
+  local parsed
+
+  if [[ "$value" =~ ^[0-9]{10,13}$ ]]; then
+    if (( ${#value} > 10 )); then
+      printf '%s' "$((value / 1000))"
+    else
+      printf '%s' "$value"
+    fi
+    return 0
+  fi
+
+  if [[ "$OS_NAME" == "Darwin" ]]; then
+    local normalized="$value"
+    normalized="${normalized/Z/+0000}"
+    parsed="$(date -u -j -f '%Y-%m-%dT%H:%M:%S%z' "$normalized" '+%s' 2>/dev/null || true)"
+    if [[ "$parsed" =~ ^[0-9]+$ ]]; then
+      printf '%s' "$parsed"
+      return 0
+    fi
+
+    parsed="$(date -u -j -f '%Y-%m-%d %H:%M:%S' "$value" '+%s' 2>/dev/null || true)"
+    if [[ "$parsed" =~ ^[0-9]+$ ]]; then
+      printf '%s' "$parsed"
+      return 0
+    fi
+  else
+    parsed="$(date -u -d "$value" '+%s' 2>/dev/null || true)"
+    if [[ "$parsed" =~ ^[0-9]+$ ]]; then
+      printf '%s' "$parsed"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+extract_json_string_value() {
+  local metadata_json="$1"
+  local field_name="$2"
+  local compact
+
+  compact="$(printf '%s' "$metadata_json" | tr -d '\r\n')"
+  printf '%s' "$compact" | sed -nE "s/.*\"$field_name\"[[:space:]]*:[[:space:]]*\"([^\"]+)\".*/\1/p" | head -n 1
+}
+
+extract_json_numeric_value() {
+  local metadata_json="$1"
+  local field_name="$2"
+  local compact
+
+  compact="$(printf '%s' "$metadata_json" | tr -d '\r\n')"
+  printf '%s' "$compact" | sed -nE "s/.*\"$field_name\"[[:space:]]*:[[:space:]]*([0-9]{10,13}).*/\1/p" | head -n 1
+}
+
+extract_nested_timestamp_value() {
+  local metadata_json="$1"
+  local field_name="$2"
+  local compact object_snippet
+
+  compact="$(printf '%s' "$metadata_json" | tr -d '\r\n')"
+  object_snippet="$(printf '%s' "$compact" | grep -oE "\"$field_name\"[[:space:]]*:[[:space:]]*\{[^}]*\}" | head -n 1 || true)"
+  if [[ -z "$object_snippet" ]]; then
+    return 1
+  fi
+
+  printf '%s' "$object_snippet" | sed -nE 's/.*"timestamp"[[:space:]]*:[[:space:]]*"?([0-9]{10,13})"?.*/\1/p' | head -n 1
+}
+
+extract_metadata_field_epoch() {
+  local metadata_json="$1"
+  local field_name="$2"
+  local candidate
+
+  candidate="$(extract_json_numeric_value "$metadata_json" "$field_name" || true)"
+  if [[ -n "$candidate" ]]; then
+    parse_datetime_to_epoch "$candidate"
+    return $?
+  fi
+
+  candidate="$(extract_json_string_value "$metadata_json" "$field_name" || true)"
+  if [[ -n "$candidate" ]]; then
+    parse_datetime_to_epoch "$candidate"
+    return $?
+  fi
+
+  candidate="$(extract_nested_timestamp_value "$metadata_json" "$field_name" || true)"
+  if [[ -n "$candidate" ]]; then
+    parse_datetime_to_epoch "$candidate"
+    return $?
+  fi
+
+  return 1
+}
+
+get_primary_supplemental_epoch_from_json() {
+  local metadata_json="$1"
+  local key epoch
+
+  for key in CreationTime LastWriteTime creationTime lastWriteTime photoTakenTime modificationTime; do
+    if epoch="$(extract_metadata_field_epoch "$metadata_json" "$key")"; then
+      printf '%s' "$epoch"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+get_supplemental_date_epoch() {
+  local file_path="$1"
+  local metadata_json epoch
+
+  metadata_json="$(get_supplemental_metadata "$file_path" || true)"
+  if [[ -z "$metadata_json" ]]; then
+    return 1
+  fi
+
+  if epoch="$(get_primary_supplemental_epoch_from_json "$metadata_json")"; then
+    printf '%s' "$epoch"
+    return 0
+  fi
+
+  return 1
 }
 
 get_supplemental_metadata_path() {
@@ -509,21 +643,17 @@ get_supplemental_metadata() {
 apply_supplemental_metadata() {
   local destination_path="$1"
   local metadata_json="$2"
+  local primary_epoch
 
   if [[ -z "$metadata_json" ]] || [[ ! -f "$destination_path" ]]; then
     return 1
   fi
 
-  local creation_time modified_time
-
-  creation_time="$(printf '%s' "$metadata_json" | grep -o '"CreationTime"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || true)"
-  modified_time="$(printf '%s' "$metadata_json" | grep -o '"LastWriteTime"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || true)"
-
-  if [[ -n "$modified_time" ]]; then
+  if primary_epoch="$(get_primary_supplemental_epoch_from_json "$metadata_json")"; then
     if [[ "$OS_NAME" == "Darwin" ]]; then
-      touch -d "$modified_time" "$destination_path" 2>/dev/null || true
+      touch -t "$(date -u -r "$primary_epoch" '+%Y%m%d%H%M.%S')" "$destination_path" 2>/dev/null || true
     else
-      touch -d "$modified_time" -- "$destination_path" 2>/dev/null || true
+      touch -d "@$primary_epoch" -- "$destination_path" 2>/dev/null || true
     fi
   fi
 
@@ -967,7 +1097,7 @@ if (( ! DRY_RUN && plan_count > 0 )); then
     append_log_line "$log_line"
 
     # Apply supplemental metadata if available
-    if (( USE_SUPPLEMENTAL_METADATA )) && [[ -f "$source_path" ]]; then
+    if (( USE_SUPPLEMENTAL_METADATA )); then
       metadata_json="$(get_supplemental_metadata "$source_path" || true)"
       if [[ -n "$metadata_json" ]]; then
         apply_supplemental_metadata "$destination_path" "$metadata_json"
