@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string[]]$Source,
+    [Alias("Source")]
+    [string[]]$Sources,
 
     [Parameter(Mandatory=$true)]
     [string[]]$Targets,
@@ -21,6 +22,7 @@ param(
     [switch]$SeparateByType,
 
     [int]$MaxFiles = 0,
+    [int]$Threads = 1,
 
     [switch]$UseFileNameDate,
     [switch]$MoveFiles,
@@ -60,6 +62,10 @@ if (-not ($UseName -or $UseDate -or $UseSize)) {
     Write-Output "Defaulting to: Name + Date"
     $UseName = $true
     $UseDate = $true
+}
+
+if ($Threads -lt 1) {
+    throw "-Threads must be at least 1"
 }
 
 $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -391,7 +397,7 @@ if ($hasCategoryFilters) {
     Write-Output "Scanning all files..."
 }
 
-$files = Get-ChildItem $Source -Recurse -File | Where-Object {
+$files = Get-ChildItem $Sources -Recurse -File | Where-Object {
     Should-IncludeFile $_
 }
 
@@ -401,6 +407,9 @@ if ($MaxFiles -gt 0) {
 
 $total = $files.Count
 $current = 0
+$plans = New-Object System.Collections.Generic.List[object]
+$plannedDestinations = @{}
+$hasDestinationCollisions = $false
 $transferred = 0
 $replaced = 0
 $skipped = 0
@@ -467,11 +476,22 @@ foreach ($file in $files) {
 
         if ($DryRun) {
             Write-Output "[SIMULATION] $logLine"
+            if ($LogFile) { Add-Content -LiteralPath $LogFile $logLine }
         } else {
-            New-Item -ItemType Directory -Path $destRoot -Force | Out-Null
-            Invoke-Transfer -Path $file.FullName -Destination $destinationPath -Force
-            Write-Output $logLine
-            $replaced++
+            if ($plannedDestinations.ContainsKey($destinationPath)) {
+                $hasDestinationCollisions = $true
+            } else {
+                $plannedDestinations[$destinationPath] = $true
+            }
+
+            $plans.Add([pscustomobject]@{
+                OperationType = 'Replace'
+                SourcePath = $file.FullName
+                DestinationPath = $destinationPath
+                DestinationRoot = $destRoot
+                Force = $true
+                LogLine = $logLine
+            }) | Out-Null
         }
 
     } else {
@@ -480,15 +500,116 @@ foreach ($file in $files) {
 
         if ($DryRun) {
             Write-Output "[SIMULATION] $logLine"
+            if ($LogFile) { Add-Content -LiteralPath $LogFile $logLine }
         } else {
-            New-Item -ItemType Directory -Path $destRoot -Force | Out-Null
-            Invoke-Transfer -Path $file.FullName -Destination $destinationPath
-            Write-Output $logLine
-            $transferred++
+            if ($plannedDestinations.ContainsKey($destinationPath)) {
+                $hasDestinationCollisions = $true
+            } else {
+                $plannedDestinations[$destinationPath] = $true
+            }
+
+            $plans.Add([pscustomobject]@{
+                OperationType = 'Transfer'
+                SourcePath = $file.FullName
+                DestinationPath = $destinationPath
+                DestinationRoot = $destRoot
+                Force = $false
+                LogLine = $logLine
+            }) | Out-Null
+        }
+    }
+}
+
+if (-not $DryRun -and $plans.Count -gt 0) {
+    $effectiveThreads = [Math]::Min($Threads, $plans.Count)
+
+    if ($hasDestinationCollisions -and $effectiveThreads -gt 1) {
+        Write-Output "Destination collisions detected in the transfer plan. Falling back to a single-threaded transfer phase."
+        $effectiveThreads = 1
+    }
+
+    if ($effectiveThreads -gt 1) {
+        Write-Output "Processing $($plans.Count) file transfers with $effectiveThreads threads..."
+
+        $transferWorker = {
+            param(
+                [string]$SourcePath,
+                [string]$DestinationPath,
+                [string]$DestinationRoot,
+                [bool]$Force,
+                [bool]$MoveFiles
+            )
+
+            $null = New-Item -ItemType Directory -Path $DestinationRoot -Force
+
+            if ($MoveFiles) {
+                if ($Force) {
+                    Move-Item -LiteralPath $SourcePath -Destination $DestinationPath -Force
+                } else {
+                    Move-Item -LiteralPath $SourcePath -Destination $DestinationPath
+                }
+            } else {
+                if ($Force) {
+                    Copy-Item -LiteralPath $SourcePath -Destination $DestinationPath -Force
+                } else {
+                    Copy-Item -LiteralPath $SourcePath -Destination $DestinationPath
+                }
+            }
+        }
+
+        $runspacePool = [RunspaceFactory]::CreateRunspacePool(1, $effectiveThreads)
+        $runspacePool.Open()
+        $pendingTransfers = @()
+
+        try {
+            foreach ($plan in $plans) {
+                $pipeline = [PowerShell]::Create()
+                $pipeline.RunspacePool = $runspacePool
+
+                $null = $pipeline.AddScript($transferWorker).
+                    AddArgument($plan.SourcePath).
+                    AddArgument($plan.DestinationPath).
+                    AddArgument($plan.DestinationRoot).
+                    AddArgument([bool]$plan.Force).
+                    AddArgument([bool]$MoveFiles)
+
+                $pendingTransfers += [pscustomobject]@{
+                    Pipeline = $pipeline
+                    Handle = $pipeline.BeginInvoke()
+                }
+            }
+
+            foreach ($pendingTransfer in $pendingTransfers) {
+                $pendingTransfer.Pipeline.EndInvoke($pendingTransfer.Handle) | Out-Null
+                $pendingTransfer.Pipeline.Dispose()
+            }
+        } finally {
+            foreach ($pendingTransfer in $pendingTransfers) {
+                if ($pendingTransfer.Pipeline) {
+                    $pendingTransfer.Pipeline.Dispose()
+                }
+            }
+
+            $runspacePool.Close()
+            $runspacePool.Dispose()
+        }
+    } else {
+        foreach ($plan in $plans) {
+            New-Item -ItemType Directory -Path $plan.DestinationRoot -Force | Out-Null
+            Invoke-Transfer -Path $plan.SourcePath -Destination $plan.DestinationPath -Force:$plan.Force
         }
     }
 
-    if ($LogFile) { Add-Content $LogFile $logLine }
+    foreach ($plan in $plans) {
+        Write-Output $plan.LogLine
+        if ($LogFile) { Add-Content -LiteralPath $LogFile $plan.LogLine }
+
+        if ($plan.OperationType -eq 'Replace') {
+            $replaced++
+        } else {
+            $transferred++
+        }
+    }
 }
 
 # ================================

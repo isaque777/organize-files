@@ -18,6 +18,7 @@ declare -a IGNORE_EXTENSION_VALUES=()
 declare -a FILES=()
 declare -a CATEGORY_ORDER=()
 declare -a FILENAME_DATE_FORMATS=()
+declare -a TEMP_FILES=()
 
 declare -A CATEGORY_FOLDERS=()
 declare -A CATEGORY_EXTENSIONS=()
@@ -25,12 +26,14 @@ declare -A EXT_TO_CATEGORY=()
 declare -A SELECTED_CATEGORIES=()
 declare -A INCLUDED_EXTENSIONS=()
 declare -A IGNORED_EXTENSIONS=()
+declare -A PLANNED_DESTINATIONS=()
 declare -A TARGET_PATH_BY_KEY=()
 declare -A TARGET_SIZE_BY_KEY=()
 
 OUTPUT=""
 DRY_RUN=0
 LOG_FILE=""
+THREADS=1
 USE_NAME=0
 USE_DATE=0
 USE_SIZE=0
@@ -50,12 +53,24 @@ die() {
   exit 1
 }
 
+cleanup_temp_files() {
+  local temp_file
+
+  for temp_file in "${TEMP_FILES[@]}"; do
+    if [[ -n "$temp_file" && -e "$temp_file" ]]; then
+      rm -f -- "$temp_file"
+    fi
+  done
+}
+
+trap cleanup_temp_files EXIT
+
 print_usage() {
   cat <<'EOF'
-Usage: ./organize-files.sh -Source <dir...> -Targets <dir...> -Output <dir> [options]
+Usage: ./organize-files.sh -Sources <dir...> -Targets <dir...> -Output <dir> [options]
 
 Core options:
-  -Source <dir...>
+  -Sources <dir...>
   -Targets <dir...>
   -Output <dir>
   -DryRun
@@ -69,6 +84,7 @@ Core options:
   -SeparateByType
   -SeparateMedia
   -MaxFiles <count>
+  -Threads <count>
   -UseFileNameDate
   -MoveFiles
 
@@ -506,7 +522,7 @@ load_filename_date_formats "$FILENAME_DATE_FORMATS_FILE"
 
 while (( $# > 0 )); do
   case "$1" in
-    -Source)
+    -Sources|-Source)
       shift
       parse_multi_value_option SOURCE_DIRS "$@"
       shift $(( $# - PARSE_REMAINING_COUNT ))
@@ -537,6 +553,12 @@ while (( $# > 0 )); do
       shift
       (( $# > 0 )) || die "Missing value for -MaxFiles"
       MAX_FILES="$1"
+      shift
+      ;;
+    -Threads)
+      shift
+      (( $# > 0 )) || die "Missing value for -Threads"
+      THREADS="$1"
       shift
       ;;
     -DryRun)
@@ -642,7 +664,7 @@ while (( $# > 0 )); do
 done
 
 if (( ${#SOURCE_DIRS[@]} == 0 )); then
-  die "-Source requires at least one directory"
+  die "-Sources requires at least one directory"
 fi
 
 if (( ${#TARGET_DIRS[@]} == 0 )); then
@@ -657,10 +679,18 @@ if ! [[ "$MAX_FILES" =~ ^[0-9]+$ ]]; then
   die "-MaxFiles must be a non-negative integer"
 fi
 
+if ! [[ "$THREADS" =~ ^[0-9]+$ ]] || (( THREADS < 1 )); then
+  die "-Threads must be a positive integer"
+fi
+
 if (( ! USE_NAME && ! USE_DATE && ! USE_SIZE )); then
   echo "Defaulting to: Name + Date"
   USE_NAME=1
   USE_DATE=1
+fi
+
+if (( THREADS > 1 )) && ! command -v xargs >/dev/null 2>&1; then
+  die "-Threads requires xargs to be available"
 fi
 
 if (( MOVE_FILES )); then
@@ -708,6 +738,10 @@ done
 
 total=${#FILES[@]}
 current=0
+plan_file="$(mktemp)"
+TEMP_FILES+=("$plan_file")
+plan_count=0
+has_destination_collisions=0
 transferred=0
 replaced=0
 skipped=0
@@ -766,30 +800,105 @@ for file_path in "${FILES[@]}"; do
 
     if (( DRY_RUN )); then
       echo "[SIMULATION] $log_line"
+      append_log_line "$log_line"
     else
-      mkdir -p -- "$dest_root"
-      invoke_transfer "$file_path" "$destination_path"
-      echo "$log_line"
-      replaced=$((replaced + 1))
+      if [[ -n "${PLANNED_DESTINATIONS[$destination_path]+x}" ]]; then
+        has_destination_collisions=1
+      else
+        PLANNED_DESTINATIONS["$destination_path"]=1
+      fi
+
+      printf '%s\0%s\0%s\0%s\0%s\0' "replace" "$file_path" "$destination_path" "$dest_root" "$log_line" >> "$plan_file"
+      plan_count=$((plan_count + 1))
     fi
   else
     log_line="${TRANSFER_VERB}: $file_path -> $destination_path"
 
     if (( DRY_RUN )); then
       echo "[SIMULATION] $log_line"
+      append_log_line "$log_line"
     else
-      mkdir -p -- "$dest_root"
-      invoke_transfer "$file_path" "$destination_path"
-      echo "$log_line"
-      transferred=$((transferred + 1))
+      if [[ -n "${PLANNED_DESTINATIONS[$destination_path]+x}" ]]; then
+        has_destination_collisions=1
+      else
+        PLANNED_DESTINATIONS["$destination_path"]=1
+      fi
+
+      printf '%s\0%s\0%s\0%s\0%s\0' "transfer" "$file_path" "$destination_path" "$dest_root" "$log_line" >> "$plan_file"
+      plan_count=$((plan_count + 1))
     fi
   fi
-
-  append_log_line "$log_line"
 done
 
 if (( total > 0 )); then
   printf '\n' >&2
+fi
+
+if (( ! DRY_RUN && plan_count > 0 )); then
+  effective_threads=$THREADS
+  if (( effective_threads > plan_count )); then
+    effective_threads=$plan_count
+  fi
+
+  if (( has_destination_collisions && effective_threads > 1 )); then
+    echo "Destination collisions detected in the transfer plan. Falling back to a single-threaded transfer phase."
+    effective_threads=1
+  fi
+
+  if (( effective_threads > 1 )); then
+    echo "Processing $plan_count file transfers with $effective_threads threads..."
+
+    xargs -0 -n 5 -P "$effective_threads" bash -c '
+      set -euo pipefail
+      move_files="$1"
+      os_name="$2"
+      plan_type="$3"
+      source_path="$4"
+      destination_path="$5"
+      dest_root="$6"
+      log_line="$7"
+
+      mkdir -p -- "$dest_root"
+
+      if (( move_files )); then
+        if [[ "$os_name" == "Darwin" ]]; then
+          mv -f "$source_path" "$destination_path"
+        else
+          mv -f -- "$source_path" "$destination_path"
+        fi
+      else
+        if [[ "$os_name" == "Darwin" ]]; then
+          cp -f "$source_path" "$destination_path"
+        else
+          cp -f -- "$source_path" "$destination_path"
+        fi
+      fi
+    ' _ "$MOVE_FILES" "$OS_NAME" < "$plan_file"
+  else
+    while IFS= read -r -d '' plan_type \
+      && IFS= read -r -d '' source_path \
+      && IFS= read -r -d '' destination_path \
+      && IFS= read -r -d '' dest_root \
+      && IFS= read -r -d '' log_line; do
+      mkdir -p -- "$dest_root"
+      invoke_transfer "$source_path" "$destination_path"
+    done < "$plan_file"
+  fi
+
+  while IFS= read -r -d '' plan_type \
+    && IFS= read -r -d '' source_path \
+    && IFS= read -r -d '' destination_path \
+    && IFS= read -r -d '' dest_root \
+    && IFS= read -r -d '' log_line; do
+    echo "$log_line"
+    append_log_line "$log_line"
+
+    if [[ "$plan_type" == "replace" ]]; then
+      replaced=$((replaced + 1))
+    else
+      transferred=$((transferred + 1))
+    fi
+  done < "$plan_file"
 fi
 
 echo

@@ -14,6 +14,7 @@ The CLI entrypoints are `organize-files.ps1` for PowerShell and `organize-files.
 * Broader extension coverage including RAW camera formats, macro-enabled Office files, Jupyter notebooks, CAD assets, virtual disk images, AppImages, and more
 * Optional `-IgnoreExtensions` list to skip specific extensions
 * Copy by default, or move files with `-MoveFiles`
+* Optional multithreaded transfer phase with `-Threads`
 * Optional type-based folder separation with `-SeparateByType`
 * Optional year/month organization with `-OrganizeByDate`
 * Command-line interface with matching PowerShell and Bash entrypoints
@@ -80,7 +81,7 @@ Unknown extensions go into `Other` when type separation is enabled.
 
 | Parameter | Type | Description |
 | --------- | ---- | ----------- |
-| `-Source` | `string[]` | One or more source directories |
+| `-Sources` | `string[]` | One or more source directories |
 | `-Targets` | `string[]` | Target directories used for dedup comparison |
 | `-Output` | `string` | Output directory |
 | `-MoveFiles` | `switch` | Move files instead of copying them |
@@ -94,6 +95,7 @@ Unknown extensions go into `Other` when type separation is enabled.
 | `-SeparateByType` | `switch` | Create category folders like `Images`, `Audio`, `Documents`, etc. |
 | `-OrganizeByDate` | `switch` | Add `YYYY/MM` folders under the output path |
 | `-MaxFiles` | `int` | Limit the number of processed files |
+| `-Threads` | `int` | Number of worker threads used for copy or move operations |
 | `-UseFileNameDate` | `switch` | Try to extract a date from filenames like `IMG_20160421.jpg` |
 
 ### Category Flags
@@ -123,9 +125,10 @@ Unknown extensions go into `Other` when type separation is enabled.
 
 ```powershell
 .\organize-files.ps1 `
-  -Source "E:\cloud","F:\camera-roll" `
+  -Sources "E:\cloud","F:\camera-roll" `
   -Targets "D:\Library" `
   -Output "D:\OrganizedFiles" `
+  -Threads 4 `
   -Images -Videos -Audio `
   -SeparateByType `
   -OrganizeByDate `
@@ -137,7 +140,7 @@ Unknown extensions go into `Other` when type separation is enabled.
 
 ```powershell
 .\organize-files.ps1 `
-  -Source "E:\mixed-backup","F:\desktop-export" `
+  -Sources "E:\mixed-backup","F:\desktop-export" `
   -Targets "D:\Library" `
   -Output "D:\OrganizedFiles" `
   -SeparateByType `
@@ -148,7 +151,7 @@ Unknown extensions go into `Other` when type separation is enabled.
 
 ```powershell
 .\organize-files.ps1 `
-  -Source "E:\downloads" `
+  -Sources "E:\downloads" `
   -Targets "D:\Library" `
   -Output "D:\OrganizedFiles" `
   -Archives `
@@ -160,9 +163,10 @@ Unknown extensions go into `Other` when type separation is enabled.
 
 ```bash
 ./organize-files.sh \
-  -Source "/mnt/cloud" "/mnt/backup" \
+  -Sources "/mnt/cloud" "/mnt/backup" \
   -Targets "/srv/library" \
   -Output "/srv/organized-files" \
+  -Threads 4 \
   -Documents -Archives \
   -IgnoreExtensions ".tmp" ".bak" \
   -SeparateByType
@@ -195,6 +199,8 @@ COPY: D:\source\report.pdf -> D:\OrganizedFiles\Documents\2026\04\report.pdf
 ## Known Limitations
 
 * The Bash implementation uses optional `exiftool` metadata when it is available. Without it, Linux and macOS runs fall back to filename and filesystem timestamps.
+* `-Threads` parallelizes only the copy or move phase. File discovery, date selection, and dedup decisions remain serial.
+* When multiple planned transfers resolve to the same destination path, the script automatically falls back to single-threaded transfer execution to avoid races.
 * Unknown extensions can still be copied when no category flags are used, but they are only grouped into a named category if the script recognizes their extension.
 * Files without EXIF or filename dates fall back to filesystem dates.
 * Some apps strip metadata, so timestamps may not reflect when a photo or video was originally created.
@@ -205,7 +211,7 @@ COPY: D:\source\report.pdf -> D:\OrganizedFiles\Documents\2026\04\report.pdf
 
 * Windows PowerShell 5+ or PowerShell 7+ for `organize-files.ps1`
 * Bash 4+ for `organize-files.sh`
-* Standard `find`, `stat`, `date`, `cp`, and `mv` utilities on Linux or macOS
+* Standard `find`, `stat`, `date`, `cp`, `mv`, and `xargs` utilities on Linux or macOS
 * No required external dependencies
 
 Optional:
