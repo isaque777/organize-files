@@ -56,6 +56,7 @@ $switchCompleter = {
         '-SeparateMedia',
         '-UseFileNameDate',
         '-UseMetadataDate',
+        '-UseSupplementalMetadata',
         '-MoveFiles'
     )
 

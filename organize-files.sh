@@ -43,6 +43,7 @@ SEPARATE_BY_TYPE=0
 MAX_FILES=0
 USE_FILENAME_DATE=0
 USE_METADATA_DATE=0
+USE_SUPPLEMENTAL_METADATA=0
 MOVE_FILES=0
 HAS_CATEGORY_FILTERS=0
 TRANSFER_VERB="COPY"
@@ -88,6 +89,7 @@ Core options:
   -Threads <count>
   -UseFileNameDate
   -UseMetadataDate
+  -UseSupplementalMetadata
   -MoveFiles
 
 Category flags:
@@ -480,6 +482,54 @@ get_best_date_epoch() {
   get_mtime_epoch "$file_path"
 }
 
+get_supplemental_metadata_path() {
+  local file_path="$1"
+  local metadata_filename
+  metadata_filename="$(basename -- "$file_path").supplemental-metadata.json"
+  printf '%s/%s' "$(dirname -- "$file_path")" "$metadata_filename"
+}
+
+get_supplemental_metadata() {
+  local file_path="$1"
+  local metadata_path
+
+  if (( ! USE_SUPPLEMENTAL_METADATA )); then
+    return 1
+  fi
+
+  metadata_path="$(get_supplemental_metadata_path "$file_path")"
+
+  if [[ ! -f "$metadata_path" ]]; then
+    return 1
+  fi
+
+  cat "$metadata_path"
+}
+
+apply_supplemental_metadata() {
+  local destination_path="$1"
+  local metadata_json="$2"
+
+  if [[ -z "$metadata_json" ]] || [[ ! -f "$destination_path" ]]; then
+    return 1
+  fi
+
+  local creation_time modified_time
+
+  creation_time="$(printf '%s' "$metadata_json" | grep -o '"CreationTime"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || true)"
+  modified_time="$(printf '%s' "$metadata_json" | grep -o '"LastWriteTime"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || true)"
+
+  if [[ -n "$modified_time" ]]; then
+    if [[ "$OS_NAME" == "Darwin" ]]; then
+      touch -d "$modified_time" "$destination_path" 2>/dev/null || true
+    else
+      touch -d "$modified_time" -- "$destination_path" 2>/dev/null || true
+    fi
+  fi
+
+  echo "Applied metadata to: $destination_path"
+}
+
 collect_files_from_directory() {
   local directory_path="$1"
   local file_path
@@ -615,6 +665,10 @@ while (( $# > 0 )); do
       ;;
     -UseMetadataDate)
       USE_METADATA_DATE=1
+      shift
+      ;;
+    -UseSupplementalMetadata)
+      USE_SUPPLEMENTAL_METADATA=1
       shift
       ;;
     -MoveFiles)
@@ -911,6 +965,14 @@ if (( ! DRY_RUN && plan_count > 0 )); then
     && IFS= read -r -d '' log_line; do
     echo "$log_line"
     append_log_line "$log_line"
+
+    # Apply supplemental metadata if available
+    if (( USE_SUPPLEMENTAL_METADATA )) && [[ -f "$source_path" ]]; then
+      metadata_json="$(get_supplemental_metadata "$source_path" || true)"
+      if [[ -n "$metadata_json" ]]; then
+        apply_supplemental_metadata "$destination_path" "$metadata_json"
+      fi
+    fi
 
     if [[ "$plan_type" == "replace" ]]; then
       replaced=$((replaced + 1))

@@ -22,6 +22,7 @@ The CLI entrypoints are `organize-files.ps1` for PowerShell and `organize-files.
 * Native Bash implementation for Linux and macOS, not just a PowerShell wrapper
 * EXIF or shell metadata date lookup when available
 * Filename date extraction fallback
+* **Optional supplemental metadata from accompanying JSON files** to override or preserve file properties
 * Deduplication and optional size-based replacement logic
 * Dry-run mode, logging support, and max-file limits
 * Backward-compatible `-SeparateMedia` alias for `-SeparateByType`
@@ -149,6 +150,7 @@ Unknown extensions go into `Other` when type separation is enabled.
 | `-Threads` | `int` | Number of worker threads used for copy or move operations |
 | `-UseFileNameDate` | `switch` | Try to extract a date from filenames like `IMG_20160421.jpg` |
 | `-UseMetadataDate` | `switch` | Extract date from file metadata (EXIF for images/videos, requires exiftool on Linux/macOS) |
+| `-UseSupplementalMetadata` | `switch` | Apply metadata from accompanying `.supplemental-metadata.json` files (dates, attributes, etc.) |
 
 ### Category Flags
 

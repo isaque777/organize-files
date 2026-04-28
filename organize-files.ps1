@@ -30,6 +30,7 @@ param(
 
     [switch]$UseFileNameDate,
     [switch]$UseMetadataDate,
+    [switch]$UseSupplementalMetadata,
     [switch]$MoveFiles,
     [string[]]$IgnoreExtensions = @(),
 
@@ -373,6 +374,67 @@ function Get-BestDate($file) {
 }
 
 # ================================
+# SUPPLEMENTAL METADATA FUNCTIONS
+# ================================
+function Get-SupplementalMetadata {
+    param($file)
+
+    if (-not $UseSupplementalMetadata) {
+        return $null
+    }
+
+    $metadataFileName = $file.Name + ".supplemental-metadata.json"
+    $metadataPath = Join-Path $file.Directory.FullName $metadataFileName
+
+    if (Test-Path -LiteralPath $metadataPath) {
+        try {
+            $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+            return $metadata
+        } catch {
+            Write-Output "Warning: Failed to parse metadata file: $metadataPath"
+            return $null
+        }
+    }
+
+    return $null
+}
+
+function Apply-SupplementalMetadata {
+    param(
+        [string]$FilePath,
+        [object]$Metadata
+    )
+
+    if (-not $Metadata) {
+        return
+    }
+
+    try {
+        # Apply CreationTime if specified
+        if ($Metadata.CreationTime) {
+            $creationDate = [datetime]$Metadata.CreationTime
+            Set-ItemProperty -LiteralPath $FilePath -Name CreationTime -Value $creationDate -ErrorAction Stop
+        }
+
+        # Apply LastWriteTime if specified
+        if ($Metadata.LastWriteTime) {
+            $writeDate = [datetime]$Metadata.LastWriteTime
+            Set-ItemProperty -LiteralPath $FilePath -Name LastWriteTime -Value $writeDate -ErrorAction Stop
+        }
+
+        # Apply custom properties (attributes, etc)
+        if ($Metadata.Attributes) {
+            $attrValue = [System.IO.FileAttributes]$Metadata.Attributes
+            Set-ItemProperty -LiteralPath $FilePath -Name Attributes -Value $attrValue -ErrorAction Stop
+        }
+
+        Write-Output "Applied metadata to: $FilePath"
+    } catch {
+        Write-Output "Warning: Failed to apply metadata to file: $FilePath - $_"
+    }
+}
+
+# ================================
 # INDEX TARGETS
 # ================================
 Write-Output "Indexing targets..."
@@ -613,6 +675,17 @@ if (-not $DryRun -and $plans.Count -gt 0) {
             $replaced++
         } else {
             $transferred++
+        }
+
+        # Apply supplemental metadata after transfer
+        if ($UseSupplementalMetadata) {
+            $sourceFile = Get-Item -LiteralPath $plan.SourcePath -ErrorAction SilentlyContinue
+            if ($sourceFile) {
+                $metadata = Get-SupplementalMetadata $sourceFile
+                if ($metadata) {
+                    Apply-SupplementalMetadata -FilePath $plan.DestinationPath -Metadata $metadata
+                }
+            }
         }
     }
 }
