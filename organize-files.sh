@@ -42,6 +42,7 @@ ORGANIZE_BY_DATE=0
 SEPARATE_BY_TYPE=0
 MAX_FILES=0
 USE_FILENAME_DATE=0
+USE_METADATA_DATE=0
 MOVE_FILES=0
 HAS_CATEGORY_FILTERS=0
 TRANSFER_VERB="COPY"
@@ -86,6 +87,7 @@ Core options:
   -MaxFiles <count>
   -Threads <count>
   -UseFileNameDate
+  -UseMetadataDate
   -MoveFiles
 
 Category flags:
@@ -455,7 +457,7 @@ get_best_date_epoch() {
 
   category_name="$(get_category_name_for_file "$file_path" || true)"
 
-  if [[ "$category_name" == "Images" || "$category_name" == "Videos" ]]; then
+  if (( USE_METADATA_DATE )) && [[ "$category_name" == "Images" || "$category_name" == "Videos" ]]; then
     if metadata_epoch="$(get_metadata_date_epoch "$file_path")"; then
       printf '%s' "$metadata_epoch"
       return 0
@@ -609,6 +611,10 @@ while (( $# > 0 )); do
       ;;
     -UseFileNameDate)
       USE_FILENAME_DATE=1
+      shift
+      ;;
+    -UseMetadataDate)
+      USE_METADATA_DATE=1
       shift
       ;;
     -MoveFiles)

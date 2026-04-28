@@ -29,6 +29,7 @@ param(
     [int]$Threads = 1,
 
     [switch]$UseFileNameDate,
+    [switch]$UseMetadataDate,
     [switch]$MoveFiles,
     [string[]]$IgnoreExtensions = @(),
 
@@ -344,8 +345,8 @@ function Get-BestDate($file) {
 
     $categoryName = Get-CategoryNameForFile $file
 
-    # 1. EXIF (best for photos)
-    if ($shell -and ($categoryName -in @("Images", "Videos"))) {
+    # 1. EXIF/Metadata (best for photos and videos)
+    if ($UseMetadataDate -and $shell -and ($categoryName -in @("Images", "Videos"))) {
         try {
             $folder = $shell.Namespace($file.Directory.FullName)
             $item   = $folder.ParseName($file.Name)

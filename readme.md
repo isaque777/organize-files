@@ -148,6 +148,7 @@ Unknown extensions go into `Other` when type separation is enabled.
 | `-MaxFiles` | `int` | Limit the number of processed files |
 | `-Threads` | `int` | Number of worker threads used for copy or move operations |
 | `-UseFileNameDate` | `switch` | Try to extract a date from filenames like `IMG_20160421.jpg` |
+| `-UseMetadataDate` | `switch` | Extract date from file metadata (EXIF for images/videos, requires exiftool on Linux/macOS) |
 
 ### Category Flags
 

@@ -16,7 +16,7 @@ _organize_files_completion() {
     local opts="-Sources -Source -Targets -Output -LogFile -MaxFiles -Threads 
                 -DryRun -UseName -UseDate -UseSize -IgnoreDuplicateSuffix 
                 -IgnoreExtensions -OrganizeByDate -SeparateByType -SeparateMedia 
-                -UseFileNameDate -MoveFiles -Images -Image -Videos -Video -Audio 
+                -UseFileNameDate -UseMetadataDate -MoveFiles -Images -Image -Videos -Video -Audio 
                 -Documents -Document -Archives -Archive -Code -Fonts -Font 
                 -Ebooks -Ebook -Subtitles -Subtitle -Data -DiskImages -DiskImage 
                 -Executables -Executable -DesignFiles -Design -Models3D -Model3D 
