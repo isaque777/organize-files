@@ -420,15 +420,21 @@ function Convert-ToDateTimeFromMetadataValue {
             return $null
         }
 
-        $parsedOffset = $null
-        if ([datetimeoffset]::TryParse($trimmed, [ref]$parsedOffset)) {
-            return $parsedOffset.UtcDateTime
-        }
+        try {
+            return [datetimeoffset]::Parse(
+                $trimmed,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::AllowWhiteSpaces
+            ).UtcDateTime
+        } catch {}
 
-        $parsedDate = $null
-        if ([datetime]::TryParse($trimmed, [ref]$parsedDate)) {
-            return $parsedDate
-        }
+        try {
+            return [datetime]::Parse(
+                $trimmed,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::AllowWhiteSpaces
+            )
+        } catch {}
 
         return $null
     }
