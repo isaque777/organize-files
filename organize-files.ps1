@@ -360,33 +360,57 @@ function New-DateResult {
 }
 
 function Get-ShellDatePropertyIndex {
-    param($folder)
-
-    $exactCandidates = @(
-        'Date taken',
-        'Media created',
-        'Date created',
-        'Created',
-        'Date acquired',
-        'Content created'
+    param(
+        $folder,
+        [string]$CategoryName = ""
     )
 
+    $preferredLabels = if ($CategoryName -eq "Videos") {
+        @(
+            'Media created',
+            'Content created',
+            'Date taken',
+            'Date acquired',
+            'Date created',
+            'Created'
+        )
+    } else {
+        @(
+            'Date taken',
+            'Content created',
+            'Date acquired',
+            'Media created',
+            'Date created',
+            'Created'
+        )
+    }
+
+    $properties = @()
     for ($i=0; $i -lt 400; $i++) {
-        $label = $folder.GetDetailsOf($null, $i)
+        [string]$rawLabel = $folder.GetDetailsOf($null, $i)
+        $label = (($rawLabel -replace '\p{Cf}', '') -replace '\s+', ' ').Trim()
         if ([string]::IsNullOrWhiteSpace($label)) {
             continue
         }
 
-        foreach ($candidate in $exactCandidates) {
-            if ($label.Trim() -ieq $candidate) {
-                return [pscustomobject]@{ Index = $i; Label = $label.Trim() }
-            }
-        }
+        $properties += [pscustomobject]@{ Index = $i; Label = $label }
+    }
 
-        if ($label -match '(?i)date\s+taken|media\s+created|date\s+created|date\s+acquired|content\s+created') {
-            return [pscustomobject]@{ Index = $i; Label = $label.Trim() }
+    foreach ($candidate in $preferredLabels) {
+        $match = $properties | Where-Object { $_.Label -ieq $candidate } | Select-Object -First 1
+        if ($match) {
+            return $match
         }
     }
+
+    foreach ($candidate in $preferredLabels) {
+        $escapedCandidate = [regex]::Escape($candidate) -replace '\\ ', '\s+'
+        $match = $properties | Where-Object { $_.Label -match "(?i)$escapedCandidate" } | Select-Object -First 1
+        if ($match) {
+            return $match
+        }
+    }
+
     return $null
 }
 
@@ -406,6 +430,30 @@ function Convert-FromShellDateValue {
     $cleanedValue = ($Value -replace '\p{Cf}', '').Trim()
     if (-not $cleanedValue) {
         return $null
+    }
+
+    foreach ($format in @(
+        'yyyy-MM-dd h:mm tt',
+        'yyyy-MM-dd hh:mm tt',
+        'yyyy-MM-dd H:mm',
+        'yyyy-MM-dd HH:mm',
+        'yyyy:MM:dd H:mm:ss',
+        'yyyy:MM:dd HH:mm:ss',
+        'M/d/yyyy h:mm tt',
+        'M/d/yyyy hh:mm tt',
+        'MM/dd/yyyy h:mm tt',
+        'MM/dd/yyyy hh:mm tt',
+        'd/M/yyyy H:mm',
+        'dd/MM/yyyy HH:mm'
+    )) {
+        try {
+            return [datetime]::ParseExact(
+                $cleanedValue,
+                $format,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::AllowWhiteSpaces
+            )
+        } catch {}
     }
 
     foreach ($culture in @(
@@ -443,7 +491,7 @@ function Get-EmbeddedMetadataDate {
             return New-DateResult
         }
 
-        $property = Get-ShellDatePropertyIndex $folder
+        $property = Get-ShellDatePropertyIndex -folder $folder -CategoryName $categoryName
         if ($null -eq $property) {
             return New-DateResult
         }
@@ -786,7 +834,7 @@ function Write-TransferReport {
         New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
     }
 
-    $Plans | ForEach-Object {
+    $reportItems = @($Plans | ForEach-Object {
         $destinationFile = Get-Item -LiteralPath $_.DestinationPath -ErrorAction SilentlyContinue
         [pscustomobject]@{
             Operation = $_.OperationType
@@ -802,7 +850,27 @@ function Write-TransferReport {
             FinalLastWriteTime = if ($destinationFile) { Format-ReportDate $destinationFile.LastWriteTime } else { "" }
             Status = $_.Status
         }
-    } | Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding UTF8
+    })
+
+    if ($reportItems.Count -gt 0) {
+        $reportItems | Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding UTF8
+    } else {
+        $headers = @(
+            'Operation',
+            'SourcePath',
+            'DestinationPath',
+            'SizeBytes',
+            'SelectedDate',
+            'DateSource',
+            'ReliableDateFound',
+            'FileDateSet',
+            'FileDateSetSource',
+            'FinalCreationTime',
+            'FinalLastWriteTime',
+            'Status'
+        )
+        Set-Content -LiteralPath $Path -Value ('"{0}"' -f ($headers -join '","')) -Encoding UTF8
+    }
 
     Write-Output "Report written to: $Path"
 }
@@ -848,6 +916,7 @@ if ($MaxFiles -gt 0) {
 $total = $files.Count
 $current = 0
 $plans = New-Object System.Collections.Generic.List[object]
+$reportRows = New-Object System.Collections.Generic.List[object]
 $plannedDestinations = @{}
 $hasDestinationCollisions = $false
 $transferred = 0
@@ -909,10 +978,46 @@ foreach ($file in $files) {
         if ($UseSize -and $UseName) {
             if ($file.Length -le $target.Size) {
                 $skipped++
+                $reportRows.Add([pscustomobject]@{
+                    OperationType = 'Skip'
+                    SourcePath = $file.FullName
+                    DestinationPath = $target.Path
+                    DestinationRoot = (Split-Path -Parent $target.Path)
+                    Force = $false
+                    LogLine = "SKIP: $($file.FullName) -> $($target.Path)"
+                    SupplementalMetadata = $supplementalMetadata
+                    SupplementalPrimaryDate = $supplementalPrimaryDate
+                    EmbeddedMetadataDate = $embeddedMetadataDate
+                    SizeBytes = $file.Length
+                    SelectedDate = $bestDate
+                    DateSource = $bestDateResult.Source
+                    ReliableDateFound = [bool]$bestDateResult.Reliable
+                    FileDateSet = $false
+                    FileDateSetSource = ""
+                    Status = "Skipped: Existing target is same size or larger"
+                }) | Out-Null
                 continue
             }
         } else {
             $skipped++
+            $reportRows.Add([pscustomobject]@{
+                OperationType = 'Skip'
+                SourcePath = $file.FullName
+                DestinationPath = $target.Path
+                DestinationRoot = (Split-Path -Parent $target.Path)
+                Force = $false
+                LogLine = "SKIP: $($file.FullName) -> $($target.Path)"
+                SupplementalMetadata = $supplementalMetadata
+                SupplementalPrimaryDate = $supplementalPrimaryDate
+                EmbeddedMetadataDate = $embeddedMetadataDate
+                SizeBytes = $file.Length
+                SelectedDate = $bestDate
+                DateSource = $bestDateResult.Source
+                ReliableDateFound = [bool]$bestDateResult.Reliable
+                FileDateSet = $false
+                FileDateSetSource = ""
+                Status = "Skipped: Duplicate target"
+            }) | Out-Null
             continue
         }
 
@@ -931,7 +1036,7 @@ foreach ($file in $files) {
             }
         }
 
-        $plans.Add([pscustomobject]@{
+        $plan = [pscustomobject]@{
             OperationType = 'Replace'
             SourcePath = $file.FullName
             DestinationPath = $destinationPath
@@ -948,7 +1053,10 @@ foreach ($file in $files) {
             FileDateSet = $false
             FileDateSetSource = ""
             Status = if ($DryRun) { "Planned" } else { "Pending" }
-        }) | Out-Null
+        }
+
+        $plans.Add($plan) | Out-Null
+        $reportRows.Add($plan) | Out-Null
 
     } else {
 
@@ -967,7 +1075,7 @@ foreach ($file in $files) {
             }
         }
 
-        $plans.Add([pscustomobject]@{
+        $plan = [pscustomobject]@{
             OperationType = 'Transfer'
             SourcePath = $file.FullName
             DestinationPath = $destinationPath
@@ -984,7 +1092,10 @@ foreach ($file in $files) {
             FileDateSet = $false
             FileDateSetSource = ""
             Status = if ($DryRun) { "Planned" } else { "Pending" }
-        }) | Out-Null
+        }
+
+        $plans.Add($plan) | Out-Null
+        $reportRows.Add($plan) | Out-Null
     }
 }
 
@@ -1096,21 +1207,6 @@ if (-not $DryRun -and $plans.Count -gt 0) {
 
                 if ((-not ($plan.SupplementalPrimaryDate -and $plan.SupplementalPrimaryDate.Found)) -or $destinationDateIsToday) {
                     try {
-
-        if ((-not $plan.FileDateSet) -and $plan.ReliableDateFound -and $plan.SelectedDate -and $plan.DateSource -notlike 'Filesystem:*') {
-            try {
-                Set-ItemProperty -LiteralPath $plan.DestinationPath -Name CreationTime -Value $plan.SelectedDate -ErrorAction Stop
-                Set-ItemProperty -LiteralPath $plan.DestinationPath -Name LastWriteTime -Value $plan.SelectedDate -ErrorAction Stop
-                $plan.FileDateSet = $true
-                $plan.FileDateSetSource = $plan.DateSource
-
-                $message = "Applied selected date to: $($plan.DestinationPath)"
-                Write-Output $message
-                if ($LogFile) { Add-Content -LiteralPath $LogFile $message }
-            } catch {
-                Write-Output "Warning: Failed to apply selected date to file: $($plan.DestinationPath) - $_"
-            }
-        }
                         Set-ItemProperty -LiteralPath $plan.DestinationPath -Name CreationTime -Value $plan.EmbeddedMetadataDate.Date -ErrorAction Stop
                         Set-ItemProperty -LiteralPath $plan.DestinationPath -Name LastWriteTime -Value $plan.EmbeddedMetadataDate.Date -ErrorAction Stop
                         $plan.FileDateSet = $true
@@ -1144,7 +1240,7 @@ if (-not $DryRun -and $plans.Count -gt 0) {
 }
 
 if ($GenerateReport) {
-    Write-TransferReport -Plans $plans.ToArray() -Path (Get-DefaultReportFile)
+    Write-TransferReport -Plans $reportRows.ToArray() -Path (Get-DefaultReportFile)
 }
 
 # ================================

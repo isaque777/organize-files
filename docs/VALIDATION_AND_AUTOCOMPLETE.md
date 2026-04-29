@@ -12,7 +12,7 @@ This document summarizes the parameter validation and autocomplete improvements 
   - `-MaxFiles`: Must be ≥ 0
   - `-Threads`: Must be ≥ 1 (positive integer)
 - Report options:
-  - `-GenerateReport`: Writes a CSV report for copied/replaced files or dry-run planned operations
+  - `-GenerateReport`: Writes a CSV report for copied/replaced files, dry-run planned operations, or skipped duplicates
   - `-ReportFile`: Optional report path
 
 **Benefits:**

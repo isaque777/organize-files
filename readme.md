@@ -142,7 +142,7 @@ Unknown extensions go into `Other` when type separation is enabled.
 | `-MoveFiles` | `switch` | Move files instead of copying them |
 | `-DryRun` | `switch` | Simulate the run without copying or moving |
 | `-LogFile` | `string` | Optional log file path |
-| `-GenerateReport` | `switch` | Generate a CSV report for copied/replaced files or dry-run planned transfers |
+| `-GenerateReport` | `switch` | Generate a CSV report for copied/replaced files, dry-run planned transfers, and skipped duplicates |
 | `-ReportFile` | `string` | Optional report path; defaults to `<Output>/organize-files-report.csv` |
 | `-UseName` | `switch` | Use the filename in dedup matching |
 | `-UseDate` | `switch` | Use the file timestamp in dedup matching |
@@ -248,7 +248,7 @@ The Bash script is a native implementation and does not shell out to PowerShell.
   -DryRun
 ```
 
-The CSV report includes the planned or completed operation, source and destination paths, selected date, date source, whether a reliable date was found, whether the destination file date was set, and final destination timestamps when available.
+The CSV report includes the planned, completed, or skipped operation, source and destination paths, selected date, date source, whether a reliable date was found, whether the destination file date was set, and final destination timestamps when available. Use the PowerShell-style single dash form, `-GenerateReport`.
 
 ---
 

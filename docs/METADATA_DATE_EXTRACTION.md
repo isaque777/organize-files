@@ -212,7 +212,7 @@ Both entrypoints read filename patterns from `../config/filename-date-formats.tx
 
 ## Report Generation
 
-Use `-GenerateReport` to write a CSV report of copied/replaced files. If `-ReportFile` is omitted, the report is written to `<Output>/organize-files-report.csv`.
+Use `-GenerateReport` to write a CSV report of copied/replaced files and skipped duplicates. If `-ReportFile` is omitted, the report is written to `<Output>/organize-files-report.csv`.
 
 The report includes operation, source path, destination path, selected date, date source, whether a reliable date was found, whether the destination file date was set, final timestamps, and status.
 
