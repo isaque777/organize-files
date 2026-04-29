@@ -12,7 +12,9 @@ param(
 
     [switch]$DryRun,
     [string]$LogFile = "",
+    [Alias("-GenerateReport")]
     [switch]$GenerateReport,
+    [Alias("-ReportFile")]
     [string]$ReportFile = "",
 
     [switch]$UseName,
@@ -77,6 +79,27 @@ if ($Threads -lt 1) {
 }
 
 $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+
+function Write-TraceLog {
+    param([Parameter(Mandatory=$true)][string]$Message)
+
+    Write-Output $Message
+
+    if (-not $LogFile) {
+        return
+    }
+
+    try {
+        $logDirectory = Split-Path -Parent $LogFile
+        if ($logDirectory) {
+            New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+        }
+
+        Add-Content -LiteralPath $LogFile -Value $Message
+    } catch {
+        Write-Output "Warning: Failed to write log file: $LogFile - $_"
+    }
+}
 
 function Resolve-SupportFilePath {
     param(
@@ -831,9 +854,11 @@ function Write-TransferReport {
 
     $reportDirectory = Split-Path -Parent $Path
     if ($reportDirectory) {
+        Write-TraceLog "Ensuring report directory: $reportDirectory"
         New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
     }
 
+    Write-TraceLog "Preparing report rows for: $Path"
     $reportItems = @($Plans | ForEach-Object {
         $destinationFile = Get-Item -LiteralPath $_.DestinationPath -ErrorAction SilentlyContinue
         [pscustomobject]@{
@@ -852,8 +877,15 @@ function Write-TransferReport {
         }
     })
 
+    Write-TraceLog "Writing report rows: $($reportItems.Count)"
+
     if ($reportItems.Count -gt 0) {
-        $reportItems | Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding UTF8
+        try {
+            $reportItems | Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
+        } catch {
+            Write-TraceLog "ERROR: Failed to write report: $Path - $_"
+            throw
+        }
     } else {
         $headers = @(
             'Operation',
@@ -869,10 +901,33 @@ function Write-TransferReport {
             'FinalLastWriteTime',
             'Status'
         )
-        Set-Content -LiteralPath $Path -Value ('"{0}"' -f ($headers -join '","')) -Encoding UTF8
+        try {
+            Set-Content -LiteralPath $Path -Value ('"{0}"' -f ($headers -join '","')) -Encoding UTF8 -ErrorAction Stop
+        } catch {
+            Write-TraceLog "ERROR: Failed to write empty report: $Path - $_"
+            throw
+        }
     }
 
-    Write-Output "Report written to: $Path"
+    $reportFile = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if ($reportFile) {
+        Write-TraceLog "Report written to: $Path"
+        Write-TraceLog "Report size bytes: $($reportFile.Length)"
+    } else {
+        Write-TraceLog "WARNING: Report write completed but file was not found: $Path"
+    }
+}
+
+$initialReportFile = Get-DefaultReportFile
+Write-TraceLog "Report requested : $([bool]$GenerateReport)"
+Write-TraceLog "Report file      : $initialReportFile"
+if ($ReportFile) {
+    Write-TraceLog "ReportFile param : $ReportFile"
+} else {
+    Write-TraceLog "ReportFile param : <default>"
+}
+if ($LogFile) {
+    Write-TraceLog "Log file         : $LogFile"
 }
 
 # ================================
@@ -1240,7 +1295,12 @@ if (-not $DryRun -and $plans.Count -gt 0) {
 }
 
 if ($GenerateReport) {
-    Write-TransferReport -Plans $reportRows.ToArray() -Path (Get-DefaultReportFile)
+    $resolvedReportFile = Get-DefaultReportFile
+    Write-TraceLog "Generating report with $($reportRows.Count) rows..."
+    Write-TraceLog "Report target: $resolvedReportFile"
+    Write-TransferReport -Plans $reportRows.ToArray() -Path $resolvedReportFile
+} else {
+    Write-TraceLog "Report not generated because -GenerateReport was not set."
 }
 
 # ================================

@@ -165,7 +165,7 @@ write_transfer_report() {
   local report_path="$1"
   local status="$2"
   local report_dir final_mtime final_mtime_iso final_creation final_creation_iso selected_iso
-  local plan_type source_path destination_path dest_root log_line metadata_date_epoch supplemental_date_epoch selected_date_epoch date_source reliable_date_found size_bytes file_date_set_source
+  local plan_type source_path destination_path dest_root log_line metadata_date_epoch supplemental_date_epoch selected_date_epoch date_source reliable_date_found size_bytes file_date_set_source row_status effective_status
 
   report_dir="$(dirname -- "$report_path")"
   mkdir -p -- "$report_dir"
@@ -183,8 +183,14 @@ write_transfer_report() {
     && IFS= read -r -d '' date_source \
     && IFS= read -r -d '' reliable_date_found \
     && IFS= read -r -d '' size_bytes \
-    && IFS= read -r -d '' file_date_set_source; do
-    if [[ "$status" == "Completed" && "$reliable_date_found" == "1" && "$date_source" != Filesystem:* ]]; then
+    && IFS= read -r -d '' file_date_set_source \
+    && IFS= read -r -d '' row_status; do
+    effective_status="$row_status"
+    if [[ -z "$effective_status" || "$effective_status" == "Pending" ]]; then
+      effective_status="$status"
+    fi
+
+    if [[ "$effective_status" == "Completed" && "$reliable_date_found" == "1" && "$date_source" != Filesystem:* ]]; then
       file_date_set_source="$date_source"
     fi
 
@@ -198,12 +204,12 @@ write_transfer_report() {
       final_mtime_iso="$(format_epoch_iso "$final_mtime")"
     fi
 
-    if [[ -z "$file_date_set_source" && "$status" != "Planned" && "$reliable_date_found" == "1" && "$date_source" != Filesystem:* ]]; then
+    if [[ -z "$file_date_set_source" && "$effective_status" != "Planned" && "$effective_status" != Skipped:* && "$reliable_date_found" == "1" && "$date_source" != Filesystem:* ]]; then
       file_date_set_source="$date_source"
     fi
 
-    append_csv_row "$report_path" "$plan_type" "$source_path" "$destination_path" "$size_bytes" "$selected_iso" "$date_source" "$reliable_date_found" "$([[ -n "$file_date_set_source" ]] && printf true || printf false)" "$file_date_set_source" "$final_creation_iso" "$final_mtime_iso" "$status"
-  done < "$plan_file"
+    append_csv_row "$report_path" "$plan_type" "$source_path" "$destination_path" "$size_bytes" "$selected_iso" "$date_source" "$reliable_date_found" "$([[ -n "$file_date_set_source" ]] && printf true || printf false)" "$file_date_set_source" "$final_creation_iso" "$final_mtime_iso" "$effective_status"
+  done < "$report_plan_file"
 
   echo "Report written to: $report_path"
 }
@@ -520,7 +526,7 @@ date_components_to_epoch_time() {
 
 get_metadata_date_epoch() {
   local info
-  info="$(get_metadata_date_info "$1" || true)"
+  info="$(get_metadata_date_info "$1" "${2:-}" || true)"
   if [[ -n "$info" ]]; then
     printf '%s' "${info%%$'\t'*}"
     return 0
@@ -530,13 +536,21 @@ get_metadata_date_epoch() {
 
 get_metadata_date_info() {
   local file_path="$1"
+  local category_name="${2:-}"
   local tag value
+  local -a tags
 
   if (( ! EXIFTOOL_AVAILABLE )); then
     return 1
   fi
 
-  for tag in DateTimeOriginal MediaCreateDate CreationDate CreateDate TrackCreateDate MediaModifyDate FileModifyDate ModifyDate; do
+  if [[ "$category_name" == "Videos" ]]; then
+    tags=(MediaCreateDate CreationDate TrackCreateDate CreateDate DateTimeOriginal MediaModifyDate ModifyDate FileModifyDate)
+  else
+    tags=(DateTimeOriginal CreateDate MediaCreateDate CreationDate TrackCreateDate MediaModifyDate ModifyDate FileModifyDate)
+  fi
+
+  for tag in "${tags[@]}"; do
     value="$(exiftool -s3 -d '%s' -"$tag" -- "$file_path" 2>/dev/null | head -n 1 || true)"
     if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
       printf '%s\tMetadata:%s' "$value" "$tag"
@@ -673,7 +687,7 @@ get_best_date_epoch() {
       return 0
     fi
 
-    if [[ "$metadata_checked" != "1" ]] && metadata_epoch="$(get_metadata_date_epoch "$file_path")"; then
+    if [[ "$metadata_checked" != "1" ]] && metadata_epoch="$(get_metadata_date_epoch "$file_path" "$category_name")"; then
       printf '%s' "$metadata_epoch"
       return 0
     fi
@@ -1205,6 +1219,8 @@ total=${#FILES[@]}
 current=0
 plan_file="$(mktemp)"
 TEMP_FILES+=("$plan_file")
+report_plan_file="$(mktemp)"
+TEMP_FILES+=("$report_plan_file")
 plan_count=0
 has_destination_collisions=0
 transferred=0
@@ -1239,7 +1255,7 @@ for file_path in "${FILES[@]}"; do
 
   if (( USE_METADATA_DATE )) && [[ "$category_name" == "Images" || "$category_name" == "Videos" ]]; then
     metadata_date_checked=1
-    metadata_date_info="$(get_metadata_date_info "$file_path" || true)"
+    metadata_date_info="$(get_metadata_date_info "$file_path" "$category_name" || true)"
     if [[ -n "$metadata_date_info" ]]; then
       metadata_date_epoch="${metadata_date_info%%$'\t'*}"
       metadata_date_source="${metadata_date_info#*$'\t'}"
@@ -1295,18 +1311,21 @@ for file_path in "${FILES[@]}"; do
   fi
 
   destination_path="$dest_root/$(basename -- "$file_path")"
+  source_size="$(stat_size "$file_path")"
 
   if [[ -n "${TARGET_PATH_BY_KEY[$key]+x}" ]]; then
+    target_path="${TARGET_PATH_BY_KEY[$key]}"
     target_size="${TARGET_SIZE_BY_KEY[$key]}"
-    source_size="$(stat_size "$file_path")"
 
     if (( USE_SIZE && USE_NAME )); then
       if (( source_size <= target_size )); then
         skipped=$((skipped + 1))
+        printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "Skip" "$file_path" "$target_path" "$(dirname -- "$target_path")" "SKIP: $file_path -> $target_path" "$metadata_date_epoch" "$supplemental_date_epoch" "$best_date_epoch" "$best_date_source" "$reliable_date_found" "$source_size" "" "Skipped: Existing target is same size or larger" >> "$report_plan_file"
         continue
       fi
     else
       skipped=$((skipped + 1))
+      printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "Skip" "$file_path" "$target_path" "$(dirname -- "$target_path")" "SKIP: $file_path -> $target_path" "$metadata_date_epoch" "$supplemental_date_epoch" "$best_date_epoch" "$best_date_source" "$reliable_date_found" "$source_size" "" "Skipped: Duplicate target" >> "$report_plan_file"
       continue
     fi
 
@@ -1325,7 +1344,8 @@ for file_path in "${FILES[@]}"; do
       fi
     fi
 
-    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "replace" "$file_path" "$destination_path" "$dest_root" "$log_line" "$metadata_date_epoch" "$supplemental_date_epoch" "$best_date_epoch" "$best_date_source" "$reliable_date_found" "$(stat_size "$file_path")" "" >> "$plan_file"
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "replace" "$file_path" "$destination_path" "$dest_root" "$log_line" "$metadata_date_epoch" "$supplemental_date_epoch" "$best_date_epoch" "$best_date_source" "$reliable_date_found" "$source_size" "" >> "$plan_file"
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "Replace" "$file_path" "$destination_path" "$dest_root" "$log_line" "$metadata_date_epoch" "$supplemental_date_epoch" "$best_date_epoch" "$best_date_source" "$reliable_date_found" "$source_size" "" "$([[ $DRY_RUN -eq 1 ]] && printf Planned || printf Pending)" >> "$report_plan_file"
     plan_count=$((plan_count + 1))
   else
     log_line="${TRANSFER_VERB}: $file_path -> $destination_path"
@@ -1343,7 +1363,8 @@ for file_path in "${FILES[@]}"; do
       fi
     fi
 
-    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "transfer" "$file_path" "$destination_path" "$dest_root" "$log_line" "$metadata_date_epoch" "$supplemental_date_epoch" "$best_date_epoch" "$best_date_source" "$reliable_date_found" "$(stat_size "$file_path")" "" >> "$plan_file"
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "transfer" "$file_path" "$destination_path" "$dest_root" "$log_line" "$metadata_date_epoch" "$supplemental_date_epoch" "$best_date_epoch" "$best_date_source" "$reliable_date_found" "$source_size" "" >> "$plan_file"
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "Transfer" "$file_path" "$destination_path" "$dest_root" "$log_line" "$metadata_date_epoch" "$supplemental_date_epoch" "$best_date_epoch" "$best_date_source" "$reliable_date_found" "$source_size" "" "$([[ $DRY_RUN -eq 1 ]] && printf Planned || printf Pending)" >> "$report_plan_file"
     plan_count=$((plan_count + 1))
   fi
 done
