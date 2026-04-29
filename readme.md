@@ -22,9 +22,10 @@ This tool is especially useful for files retrieved from Google Cloud/Google Phot
 * Command-line interface with matching PowerShell and Bash entrypoints
 * Shared category-definition and filename-date format files consumed by both entrypoints to keep rules aligned
 * Native Bash implementation for Linux and macOS, not just a PowerShell wrapper
-* EXIF or shell metadata date lookup when available
-* Filename date extraction fallback
+* EXIF or shell metadata date lookup when available, including Windows Date taken and Media created
+* Filename date extraction fallback using configurable formats in `config/filename-date-formats.txt`
 * **Optional supplemental metadata from accompanying JSON files** to override or preserve file properties
+* Optional CSV report of copied/replaced files, selected dates, date sources, and final file-date status
 * Deduplication and optional size-based replacement logic
 * Dry-run mode, logging support, and max-file limits
 * Backward-compatible `-SeparateMedia` alias for `-SeparateByType`
@@ -141,6 +142,8 @@ Unknown extensions go into `Other` when type separation is enabled.
 | `-MoveFiles` | `switch` | Move files instead of copying them |
 | `-DryRun` | `switch` | Simulate the run without copying or moving |
 | `-LogFile` | `string` | Optional log file path |
+| `-GenerateReport` | `switch` | Generate a CSV report for copied/replaced files or dry-run planned transfers |
+| `-ReportFile` | `string` | Optional report path; defaults to `<Output>/organize-files-report.csv` |
 | `-UseName` | `switch` | Use the filename in dedup matching |
 | `-UseDate` | `switch` | Use the file timestamp in dedup matching |
 | `-UseSize` | `switch` | Use file size when deciding replacements |
@@ -150,8 +153,8 @@ Unknown extensions go into `Other` when type separation is enabled.
 | `-OrganizeByDate` | `switch` | Add `YYYY/MM` folders under the output path |
 | `-MaxFiles` | `int` | Limit the number of processed files |
 | `-Threads` | `int` | Number of worker threads used for copy or move operations |
-| `-UseFileNameDate` | `switch` | Try to extract a date from filenames like `IMG_20160421.jpg` |
-| `-UseMetadataDate` | `switch` | Extract date from file metadata (EXIF for images/videos, requires exiftool on Linux/macOS) |
+| `-UseFileNameDate` | `switch` | Backward-compatible flag; filename fallback is now evaluated from configured formats when metadata dates are unavailable |
+| `-UseMetadataDate` | `switch` | Extract date from file metadata (EXIF/Date taken/Media created for images/videos, requires exiftool on Linux/macOS) and apply it to destination file dates when needed |
 | `-UseSupplementalMetadata` | `switch` | Apply metadata from accompanying `.supplemental-metadata.json` files (dates, attributes, etc.) |
 
 ### Category Flags
@@ -230,16 +233,58 @@ Unknown extensions go into `Other` when type separation is enabled.
 
 The Bash script is a native implementation and does not shell out to PowerShell.
 
+### Generate a Date Report
+
+```powershell
+.\organize-files.ps1 `
+  -Sources "E:\takeout" `
+  -Targets "D:\Library" `
+  -Output "D:\OrganizedFiles" `
+  -Images -Videos `
+  -UseMetadataDate `
+  -UseSupplementalMetadata `
+  -GenerateReport `
+  -ReportFile "D:\OrganizedFiles\date-report.csv" `
+  -DryRun
+```
+
+The CSV report includes the planned or completed operation, source and destination paths, selected date, date source, whether a reliable date was found, whether the destination file date was set, and final destination timestamps when available.
+
 ---
 
 ## How Date Detection Works
 
 Priority order:
 
-1. EXIF or shell metadata when available
-2. Filename date extraction when `-UseFileNameDate` is enabled
-3. `CreationTime`
-4. `LastWriteTime`
+1. Supplemental metadata JSON when available
+2. Embedded media metadata when available, including EXIF Date taken and Windows Media created
+3. Filename date extraction from `config/filename-date-formats.txt`
+4. Filesystem `CreationTime`
+5. Filesystem `LastWriteTime`
+
+Filesystem dates are marked as fallback dates in the report. When a reliable supplemental, embedded, or filename date is selected, the scripts apply that date to the copied or moved destination file.
+
+Filename formats are configured in `config/filename-date-formats.txt`. Supported tokens are `YYYY`, `MM`, `DD`, and optional time tokens `HH`, `MI`, `SS`; examples include `YYYYMMDD`, `YYYY-MM-DD`, `MM-DD-YYYY`, `DD_MM_YYYY`, and `YYYYMMDD_HHMMSS`.
+
+---
+
+## Repository Structure
+
+```text
+organize-files.ps1
+organize-files.sh
+organize-files.completion.ps1
+organize-files.completion.sh
+config/
+  category-definitions.tsv
+  filename-date-formats.txt
+docs/
+  METADATA_DATE_EXTRACTION.md
+  SUPPLEMENTAL_METADATA.md
+  VALIDATION_AND_AUTOCOMPLETE.md
+examples/
+  example.jpg.supplemental-metadata.json
+```
 
 ---
 

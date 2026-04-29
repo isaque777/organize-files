@@ -226,6 +226,8 @@ With this setup:
 
 Priority: Supplemental > EXIF > Filename > Creation Time > Modification Time
 
+If the supplemental JSON file is missing a usable primary date, or if the copied/moved file still has today's date after metadata is applied, `-UseMetadataDate` uses the embedded Date taken value as a fallback destination file date.
+
 ### With Dry-Run
 
 ```bash
@@ -267,7 +269,7 @@ Check `preview.log` to see what dates are being applied.
 
 2. **Verify JSON syntax:** Use a JSON validator
    ```bash
-   cat example.jpg.supplemental-metadata.json | python -m json.tool
+  cat ../examples/example.jpg.supplemental-metadata.json | python -m json.tool
    ```
 
 3. **Check flag is enabled:**
@@ -328,6 +330,6 @@ chmod u+w destination_directory
 
 ## See Also
 
-- [organize-files README](readme.md)
+- [organize-files README](../readme.md)
 - [Metadata Date Extraction Guide](METADATA_DATE_EXTRACTION.md)
 - [ISO 8601 Date Format](https://en.wikipedia.org/wiki/ISO_8601)

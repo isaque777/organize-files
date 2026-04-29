@@ -57,7 +57,8 @@ $switchCompleter = {
         '-UseFileNameDate',
         '-UseMetadataDate',
         '-UseSupplementalMetadata',
-        '-MoveFiles'
+        '-MoveFiles',
+        '-GenerateReport'
     )
 
     $switches | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
@@ -72,6 +73,7 @@ $valueParameterCompleter = {
     $valueParams = @(
         '-Output',
         '-LogFile',
+        '-ReportFile',
         '-MaxFiles',
         '-Threads',
         '-IgnoreExtensions'

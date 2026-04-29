@@ -12,6 +12,8 @@ param(
 
     [switch]$DryRun,
     [string]$LogFile = "",
+    [switch]$GenerateReport,
+    [string]$ReportFile = "",
 
     [switch]$UseName,
     [switch]$UseDate,
@@ -76,6 +78,23 @@ if ($Threads -lt 1) {
 
 $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 
+function Resolve-SupportFilePath {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$RelativePath,
+
+        [Parameter(Mandatory=$true)]
+        [string]$LegacyFileName
+    )
+
+    $preferredPath = Join-Path $scriptRoot $RelativePath
+    if (Test-Path -LiteralPath $preferredPath) {
+        return $preferredPath
+    }
+
+    return (Join-Path $scriptRoot $LegacyFileName)
+}
+
 function Get-CategoryDefinitions {
     param([Parameter(Mandatory=$true)][string]$Path)
 
@@ -116,7 +135,7 @@ function Get-CategoryDefinitions {
     return ,$definitions
 }
 
-$categoryDefinitions = Get-CategoryDefinitions -Path (Join-Path $scriptRoot "category-definitions.tsv")
+$categoryDefinitions = Get-CategoryDefinitions -Path (Resolve-SupportFilePath -RelativePath "config/category-definitions.tsv" -LegacyFileName "category-definitions.tsv")
 
 function Get-FileNameDateFormats {
     param([Parameter(Mandatory=$true)][string]$Path)
@@ -146,14 +165,21 @@ function Convert-DateFormatToPattern {
     param([Parameter(Mandatory=$true)][string]$Format)
 
     $pattern = [regex]::Escape($Format)
-    $pattern = $pattern.Replace("YYYY", "(20\d{2})")
-    $pattern = $pattern.Replace("MM", "([0-1]\d)")
-    $pattern = $pattern.Replace("DD", "([0-3]\d)")
-    return "\b{0}\b" -f $pattern
+    $pattern = $pattern.Replace("HHMMSS", "(?<hour>[01]\d|2[0-3])(?<minute>[0-5]\d)(?<second>[0-5]\d)")
+    $pattern = $pattern.Replace("YYYY", "(?<year>19\d{2}|20\d{2}|21\d{2})")
+    $pattern = $pattern.Replace("MM", "(?<month>0[1-9]|1[0-2])")
+    $pattern = $pattern.Replace("DD", "(?<day>0[1-9]|[12]\d|3[01])")
+    $pattern = $pattern.Replace("HH", "(?<hour>[01]\d|2[0-3])")
+    $pattern = $pattern.Replace("MI", "(?<minute>[0-5]\d)")
+    $pattern = $pattern.Replace("SS", "(?<second>[0-5]\d)")
+    return "(?<!\d){0}(?!\d)" -f $pattern
 }
 
-$fileNameDatePatterns = foreach ($format in (Get-FileNameDateFormats -Path (Join-Path $scriptRoot "filename-date-formats.txt"))) {
-    Convert-DateFormatToPattern -Format $format
+$fileNameDatePatterns = foreach ($format in (Get-FileNameDateFormats -Path (Resolve-SupportFilePath -RelativePath "config/filename-date-formats.txt" -LegacyFileName "filename-date-formats.txt"))) {
+    [pscustomobject]@{
+        Format = $format
+        Pattern = Convert-DateFormatToPattern -Format $format
+    }
 }
 
 function Normalize-Extension {
@@ -317,69 +343,187 @@ try {
     }
 } catch {}
 
-function Get-DateTakenIndex($folder) {
-    for ($i=0; $i -lt 50; $i++) {
-        if ($folder.GetDetailsOf($null, $i) -match "Date taken") {
-            return $i
+function New-DateResult {
+    param(
+        [object]$Date = $null,
+        [string]$Source = "",
+        [bool]$Found = $false,
+        [bool]$Reliable = $false
+    )
+
+    [pscustomobject]@{
+        Date = $Date
+        Source = $Source
+        Found = $Found
+        Reliable = $Reliable
+    }
+}
+
+function Get-ShellDatePropertyIndex {
+    param($folder)
+
+    $exactCandidates = @(
+        'Date taken',
+        'Media created',
+        'Date created',
+        'Created',
+        'Date acquired',
+        'Content created'
+    )
+
+    for ($i=0; $i -lt 400; $i++) {
+        $label = $folder.GetDetailsOf($null, $i)
+        if ([string]::IsNullOrWhiteSpace($label)) {
+            continue
+        }
+
+        foreach ($candidate in $exactCandidates) {
+            if ($label.Trim() -ieq $candidate) {
+                return [pscustomobject]@{ Index = $i; Label = $label.Trim() }
+            }
+        }
+
+        if ($label -match '(?i)date\s+taken|media\s+created|date\s+created|date\s+acquired|content\s+created') {
+            return [pscustomobject]@{ Index = $i; Label = $label.Trim() }
         }
     }
     return $null
+}
+
+function Get-DateTakenIndex($folder) {
+    $property = Get-ShellDatePropertyIndex $folder
+    if ($property) { return $property.Index }
+    return $null
+}
+
+function Convert-FromShellDateValue {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $null
+    }
+
+    $cleanedValue = ($Value -replace '\p{Cf}', '').Trim()
+    if (-not $cleanedValue) {
+        return $null
+    }
+
+    foreach ($culture in @(
+        [System.Globalization.CultureInfo]::CurrentCulture,
+        [System.Globalization.CultureInfo]::InvariantCulture
+    )) {
+        try {
+            return [datetime]::Parse(
+                $cleanedValue,
+                $culture,
+                [System.Globalization.DateTimeStyles]::AllowWhiteSpaces
+            )
+        } catch {}
+    }
+
+    return $null
+}
+
+function Get-EmbeddedMetadataDate {
+    param($file)
+
+    $categoryName = Get-CategoryNameForFile $file
+    if (-not ($UseMetadataDate -and $shell -and ($categoryName -in @("Images", "Videos")))) {
+        return New-DateResult
+    }
+
+    try {
+        $folder = $shell.Namespace($file.Directory.FullName)
+        if ($null -eq $folder) {
+            return New-DateResult
+        }
+
+        $item = $folder.ParseName($file.Name)
+        if ($null -eq $item) {
+            return New-DateResult
+        }
+
+        $property = Get-ShellDatePropertyIndex $folder
+        if ($null -eq $property) {
+            return New-DateResult
+        }
+
+        $dateTaken = $folder.GetDetailsOf($item, $property.Index)
+        $parsedDate = Convert-FromShellDateValue -Value $dateTaken
+        if ($parsedDate) {
+            return New-DateResult -Date $parsedDate -Source ("Embedded:{0}" -f $property.Label) -Found $true -Reliable $true
+        }
+
+        return New-DateResult
+    } catch {
+        return New-DateResult
+    }
 }
 
 function Get-DateFromFileName($name) {
 
-    foreach ($pattern in $fileNameDatePatterns) {
-        if ($name -match $pattern) {
+    foreach ($datePattern in $fileNameDatePatterns) {
+        if ($name -match $datePattern.Pattern) {
             try {
-                $y = $matches[1]
-                $m = $matches[2]
-                $d = $matches[3]
-                return Get-Date -Year $y -Month $m -Day $d
+                $year = [int]$matches['year']
+                $month = [int]$matches['month']
+                $day = [int]$matches['day']
+                $hour = if ($matches.ContainsKey('hour') -and $matches['hour']) { [int]$matches['hour'] } else { 0 }
+                $minute = if ($matches.ContainsKey('minute') -and $matches['minute']) { [int]$matches['minute'] } else { 0 }
+                $second = if ($matches.ContainsKey('second') -and $matches['second']) { [int]$matches['second'] } else { 0 }
+                $date = Get-Date -Year $year -Month $month -Day $day -Hour $hour -Minute $minute -Second $second -ErrorAction Stop
+                return New-DateResult -Date $date -Source ("Filename:{0}" -f $datePattern.Format) -Found $true -Reliable $true
             } catch {}
         }
     }
 
-    return $null
+    return New-DateResult
 }
 
-function Get-BestDate($file) {
+function Get-BestDate {
+    param(
+        [Parameter(Mandatory=$true)]
+        $File,
+
+        [object]$SupplementalMetadata = $null,
+        [object]$SupplementalPrimaryDate = $null,
+        [object]$EmbeddedMetadataDate = $null
+    )
 
     # 0. Supplemental metadata (highest priority when enabled)
     if ($UseSupplementalMetadata) {
-        $supplementalMetadata = Get-SupplementalMetadata $file
-        if ($supplementalMetadata) {
-            $supplementalDate = Get-PrimaryDateFromSupplementalMetadata -Metadata $supplementalMetadata
-            if ($supplementalDate) { return $supplementalDate }
+        if ($SupplementalPrimaryDate -and $SupplementalPrimaryDate.Found) {
+            return $SupplementalPrimaryDate
+        }
+
+        $metadataForDate = $SupplementalMetadata
+        if (-not $PSBoundParameters.ContainsKey('SupplementalMetadata')) {
+            $metadataForDate = Get-SupplementalMetadata $File
+        }
+
+        if ($metadataForDate) {
+            $supplementalDate = Get-PrimaryDateResultFromSupplementalMetadata -Metadata $metadataForDate
+            if ($supplementalDate.Found) { return $supplementalDate }
         }
     }
 
-    $categoryName = Get-CategoryNameForFile $file
-
     # 1. EXIF/Embedded metadata (best for photos and videos)
-    if ($UseMetadataDate -and $shell -and ($categoryName -in @("Images", "Videos"))) {
-        try {
-            $folder = $shell.Namespace($file.Directory.FullName)
-            $item   = $folder.ParseName($file.Name)
-
-            $idx = Get-DateTakenIndex $folder
-            if ($idx -ne $null) {
-                $dateTaken = $folder.GetDetailsOf($item, $idx)
-                if ($dateTaken) {
-                    try { return [datetime]$dateTaken } catch {}
-                }
-            }
-        } catch {}
+    if ($EmbeddedMetadataDate -and $EmbeddedMetadataDate.Found) {
+        return $EmbeddedMetadataDate
     }
 
-    # 2. Filename (optional)
-    if ($UseFileNameDate) {
-        $nameDate = Get-DateFromFileName $file.Name
-        if ($nameDate) { return $nameDate }
+    if (-not $PSBoundParameters.ContainsKey('EmbeddedMetadataDate')) {
+        $EmbeddedMetadataDate = Get-EmbeddedMetadataDate $File
+        if ($EmbeddedMetadataDate.Found) { return $EmbeddedMetadataDate }
     }
+
+    # 2. Filename reliable fallback
+    $nameDate = Get-DateFromFileName $File.Name
+    if ($nameDate.Found) { return $nameDate }
 
     # 3. Fallbacks
-    if ($file.CreationTime) { return $file.CreationTime }
-    return $file.LastWriteTime
+    if ($File.CreationTime) { return New-DateResult -Date $File.CreationTime -Source "Filesystem:CreationTime" -Found $true -Reliable $false }
+    return New-DateResult -Date $File.LastWriteTime -Source "Filesystem:LastWriteTime" -Found $true -Reliable $false
 }
 
 # ================================
@@ -493,8 +637,19 @@ function Convert-ToDateTimeFromMetadataValue {
 function Get-PrimaryDateFromSupplementalMetadata {
     param([object]$Metadata)
 
+    $result = Get-PrimaryDateResultFromSupplementalMetadata -Metadata $Metadata
+    if ($result.Found) {
+        return $result.Date
+    }
+
+    return $null
+}
+
+function Get-PrimaryDateResultFromSupplementalMetadata {
+    param([object]$Metadata)
+
     if (-not $Metadata) {
-        return $null
+        return New-DateResult
     }
 
     foreach ($candidateName in @(
@@ -504,7 +659,11 @@ function Get-PrimaryDateFromSupplementalMetadata {
         'lastWriteTime',
         'photoTakenTime',
         'modificationTime',
-        'photoLastModifiedTime'
+        'photoLastModifiedTime',
+        'mediaCreateDate',
+        'mediaCreated',
+        'MediaCreateDate',
+        'MediaCreated'
     )) {
         $property = $Metadata.PSObject.Properties[$candidateName]
         if (-not $property -or $null -eq $property.Value) {
@@ -513,11 +672,11 @@ function Get-PrimaryDateFromSupplementalMetadata {
 
         $candidateDate = Convert-ToDateTimeFromMetadataValue -Value $property.Value
         if ($candidateDate) {
-            return $candidateDate
+            return New-DateResult -Date $candidateDate -Source ("Supplemental:{0}" -f $candidateName) -Found $true -Reliable $true
         }
     }
 
-    return $null
+    return New-DateResult
 }
 
 function Apply-SupplementalMetadata {
@@ -575,6 +734,77 @@ function Apply-SupplementalMetadata {
     } catch {
         Write-Output "Warning: Failed to apply metadata to file: $FilePath - $_"
     }
+}
+
+function Test-DateIsToday {
+    param([object]$Date)
+
+    if (-not $Date) {
+        return $false
+    }
+
+    try {
+        return ([datetime]$Date).Date -eq (Get-Date).Date
+    } catch {
+        return $false
+    }
+}
+
+function Format-ReportDate {
+    param([object]$Date)
+
+    if (-not $Date) {
+        return ""
+    }
+
+    try {
+        return ([datetime]$Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    } catch {
+        return ""
+    }
+}
+
+function Get-DefaultReportFile {
+    if ($ReportFile) {
+        return $ReportFile
+    }
+
+    return (Join-Path $Output "organize-files-report.csv")
+}
+
+function Write-TransferReport {
+    param(
+        [Parameter(Mandatory=$true)]
+        [object[]]$Plans,
+
+        [Parameter(Mandatory=$true)]
+        [string]$Path
+    )
+
+    $reportDirectory = Split-Path -Parent $Path
+    if ($reportDirectory) {
+        New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
+    }
+
+    $Plans | ForEach-Object {
+        $destinationFile = Get-Item -LiteralPath $_.DestinationPath -ErrorAction SilentlyContinue
+        [pscustomobject]@{
+            Operation = $_.OperationType
+            SourcePath = $_.SourcePath
+            DestinationPath = $_.DestinationPath
+            SizeBytes = $_.SizeBytes
+            SelectedDate = Format-ReportDate $_.SelectedDate
+            DateSource = $_.DateSource
+            ReliableDateFound = $_.ReliableDateFound
+            FileDateSet = $_.FileDateSet
+            FileDateSetSource = $_.FileDateSetSource
+            FinalCreationTime = if ($destinationFile) { Format-ReportDate $destinationFile.CreationTime } else { "" }
+            FinalLastWriteTime = if ($destinationFile) { Format-ReportDate $destinationFile.LastWriteTime } else { "" }
+            Status = $_.Status
+        }
+    } | Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding UTF8
+
+    Write-Output "Report written to: $Path"
 }
 
 # ================================
@@ -639,10 +869,14 @@ foreach ($file in $files) {
         -PercentComplete (($current / $total) * 100)
 
     $key = Get-FileKey $file
-    $bestDate = Get-BestDate $file
+    $supplementalMetadata = if ($UseSupplementalMetadata) { Get-SupplementalMetadata $file } else { $null }
+    $supplementalPrimaryDate = if ($supplementalMetadata) { Get-PrimaryDateResultFromSupplementalMetadata -Metadata $supplementalMetadata } else { New-DateResult }
+    $embeddedMetadataDate = Get-EmbeddedMetadataDate $file
+    $bestDateResult = Get-BestDate -File $file -SupplementalMetadata $supplementalMetadata -SupplementalPrimaryDate $supplementalPrimaryDate -EmbeddedMetadataDate $embeddedMetadataDate
+    $bestDate = $bestDateResult.Date
 
     # LOG DATES
-    $dateLog = "DATE: $($file.Name) | Selected=$bestDate | Created=$($file.CreationTime) | Modified=$($file.LastWriteTime)"
+    $dateLog = "DATE: $($file.Name) | Selected=$bestDate | Source=$($bestDateResult.Source) | Reliable=$($bestDateResult.Reliable) | Created=$($file.CreationTime) | Modified=$($file.LastWriteTime)"
     Write-Output $dateLog
     if ($LogFile) { Add-Content $LogFile $dateLog }
 
@@ -687,22 +921,34 @@ foreach ($file in $files) {
         if ($DryRun) {
             Write-Output "[SIMULATION] $logLine"
             if ($LogFile) { Add-Content -LiteralPath $LogFile $logLine }
-        } else {
+        }
+
+        if (-not $DryRun) {
             if ($plannedDestinations.ContainsKey($destinationPath)) {
                 $hasDestinationCollisions = $true
             } else {
                 $plannedDestinations[$destinationPath] = $true
             }
-
-            $plans.Add([pscustomobject]@{
-                OperationType = 'Replace'
-                SourcePath = $file.FullName
-                DestinationPath = $destinationPath
-                DestinationRoot = $destRoot
-                Force = $true
-                LogLine = $logLine
-            }) | Out-Null
         }
+
+        $plans.Add([pscustomobject]@{
+            OperationType = 'Replace'
+            SourcePath = $file.FullName
+            DestinationPath = $destinationPath
+            DestinationRoot = $destRoot
+            Force = $true
+            LogLine = $logLine
+            SupplementalMetadata = $supplementalMetadata
+            SupplementalPrimaryDate = $supplementalPrimaryDate
+            EmbeddedMetadataDate = $embeddedMetadataDate
+            SizeBytes = $file.Length
+            SelectedDate = $bestDate
+            DateSource = $bestDateResult.Source
+            ReliableDateFound = [bool]$bestDateResult.Reliable
+            FileDateSet = $false
+            FileDateSetSource = ""
+            Status = if ($DryRun) { "Planned" } else { "Pending" }
+        }) | Out-Null
 
     } else {
 
@@ -711,22 +957,34 @@ foreach ($file in $files) {
         if ($DryRun) {
             Write-Output "[SIMULATION] $logLine"
             if ($LogFile) { Add-Content -LiteralPath $LogFile $logLine }
-        } else {
+        }
+
+        if (-not $DryRun) {
             if ($plannedDestinations.ContainsKey($destinationPath)) {
                 $hasDestinationCollisions = $true
             } else {
                 $plannedDestinations[$destinationPath] = $true
             }
-
-            $plans.Add([pscustomobject]@{
-                OperationType = 'Transfer'
-                SourcePath = $file.FullName
-                DestinationPath = $destinationPath
-                DestinationRoot = $destRoot
-                Force = $false
-                LogLine = $logLine
-            }) | Out-Null
         }
+
+        $plans.Add([pscustomobject]@{
+            OperationType = 'Transfer'
+            SourcePath = $file.FullName
+            DestinationPath = $destinationPath
+            DestinationRoot = $destRoot
+            Force = $false
+            LogLine = $logLine
+            SupplementalMetadata = $supplementalMetadata
+            SupplementalPrimaryDate = $supplementalPrimaryDate
+            EmbeddedMetadataDate = $embeddedMetadataDate
+            SizeBytes = $file.Length
+            SelectedDate = $bestDate
+            DateSource = $bestDateResult.Source
+            ReliableDateFound = [bool]$bestDateResult.Reliable
+            FileDateSet = $false
+            FileDateSetSource = ""
+            Status = if ($DryRun) { "Planned" } else { "Pending" }
+        }) | Out-Null
     }
 }
 
@@ -820,17 +1078,73 @@ if (-not $DryRun -and $plans.Count -gt 0) {
             $transferred++
         }
 
+        $plan.Status = "Completed"
+
         # Apply supplemental metadata after transfer
-        if ($UseSupplementalMetadata) {
-            $sourceFile = Get-Item -LiteralPath $plan.SourcePath -ErrorAction SilentlyContinue
-            if ($sourceFile) {
-                $metadata = Get-SupplementalMetadata $sourceFile
-                if ($metadata) {
-                    Apply-SupplementalMetadata -FilePath $plan.DestinationPath -Metadata $metadata
+        if ($UseSupplementalMetadata -and $plan.SupplementalMetadata) {
+            Apply-SupplementalMetadata -FilePath $plan.DestinationPath -Metadata $plan.SupplementalMetadata
+            if ($plan.SupplementalPrimaryDate -and $plan.SupplementalPrimaryDate.Found) {
+                $plan.FileDateSet = $true
+                $plan.FileDateSetSource = $plan.SupplementalPrimaryDate.Source
+            }
+        }
+
+        if ($UseMetadataDate -and $plan.EmbeddedMetadataDate -and $plan.EmbeddedMetadataDate.Found) {
+            $destinationFile = Get-Item -LiteralPath $plan.DestinationPath -ErrorAction SilentlyContinue
+            if ($destinationFile) {
+                $destinationDateIsToday = (Test-DateIsToday -Date $destinationFile.CreationTime) -or (Test-DateIsToday -Date $destinationFile.LastWriteTime)
+
+                if ((-not ($plan.SupplementalPrimaryDate -and $plan.SupplementalPrimaryDate.Found)) -or $destinationDateIsToday) {
+                    try {
+
+        if ((-not $plan.FileDateSet) -and $plan.ReliableDateFound -and $plan.SelectedDate -and $plan.DateSource -notlike 'Filesystem:*') {
+            try {
+                Set-ItemProperty -LiteralPath $plan.DestinationPath -Name CreationTime -Value $plan.SelectedDate -ErrorAction Stop
+                Set-ItemProperty -LiteralPath $plan.DestinationPath -Name LastWriteTime -Value $plan.SelectedDate -ErrorAction Stop
+                $plan.FileDateSet = $true
+                $plan.FileDateSetSource = $plan.DateSource
+
+                $message = "Applied selected date to: $($plan.DestinationPath)"
+                Write-Output $message
+                if ($LogFile) { Add-Content -LiteralPath $LogFile $message }
+            } catch {
+                Write-Output "Warning: Failed to apply selected date to file: $($plan.DestinationPath) - $_"
+            }
+        }
+                        Set-ItemProperty -LiteralPath $plan.DestinationPath -Name CreationTime -Value $plan.EmbeddedMetadataDate.Date -ErrorAction Stop
+                        Set-ItemProperty -LiteralPath $plan.DestinationPath -Name LastWriteTime -Value $plan.EmbeddedMetadataDate.Date -ErrorAction Stop
+                        $plan.FileDateSet = $true
+                        $plan.FileDateSetSource = $plan.EmbeddedMetadataDate.Source
+
+                        $message = "Applied Date taken to: $($plan.DestinationPath)"
+                        Write-Output $message
+                        if ($LogFile) { Add-Content -LiteralPath $LogFile $message }
+                    } catch {
+                        Write-Output "Warning: Failed to apply Date taken to file: $($plan.DestinationPath) - $_"
+                    }
                 }
             }
         }
+
+        if ((-not $plan.FileDateSet) -and $plan.ReliableDateFound -and $plan.DateSource -notlike 'Filesystem:*') {
+            try {
+                Set-ItemProperty -LiteralPath $plan.DestinationPath -Name CreationTime -Value $plan.SelectedDate -ErrorAction Stop
+                Set-ItemProperty -LiteralPath $plan.DestinationPath -Name LastWriteTime -Value $plan.SelectedDate -ErrorAction Stop
+                $plan.FileDateSet = $true
+                $plan.FileDateSetSource = $plan.DateSource
+
+                $message = "Applied selected date to: $($plan.DestinationPath)"
+                Write-Output $message
+                if ($LogFile) { Add-Content -LiteralPath $LogFile $message }
+            } catch {
+                Write-Output "Warning: Failed to apply selected date to file: $($plan.DestinationPath) - $_"
+            }
+        }
     }
+}
+
+if ($GenerateReport) {
+    Write-TransferReport -Plans $plans.ToArray() -Path (Get-DefaultReportFile)
 }
 
 # ================================

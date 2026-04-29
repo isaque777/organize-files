@@ -2,7 +2,9 @@
 
 ## Overview
 
-The `-UseMetadataDate` flag enables extraction of date information from file metadata, particularly useful for photos and videos where the "date taken" information is embedded in the file.
+The `-UseMetadataDate` flag enables extraction of date information from file metadata, particularly useful for photos and videos where Date taken or Media created information is embedded in the file.
+
+When a Date taken value is available, the scripts also use it to repair the copied or moved file timestamp if supplemental metadata did not provide a usable date, or if the destination file date is still today's date after transfer.
 
 ## How It Works
 
@@ -10,10 +12,13 @@ The `-UseMetadataDate` flag enables extraction of date information from file met
 
 When `-UseMetadataDate` is enabled along with `-OrganizeByDate`, the script uses this priority order:
 
-1. **Metadata date** (EXIF for images/videos)
-2. **Filename date** (if `-UseFileNameDate` is also enabled)
-3. **File creation time**
-4. **File modification time** (fallback)
+1. **Supplemental metadata JSON** when `-UseSupplementalMetadata` is enabled
+2. **Embedded metadata** (EXIF Date taken, Windows Media created, video container dates)
+3. **Filename date** from `../config/filename-date-formats.txt`
+4. **File creation time** fallback
+5. **File modification time** fallback
+
+If `-UseSupplementalMetadata` is also enabled, supplemental JSON dates remain the top priority. Date taken is used as the fallback when that JSON has no usable date or the destination timestamp still resolves to today's date.
 
 ### Platform-Specific Behavior
 
@@ -25,7 +30,9 @@ When `-UseMetadataDate` is enabled along with `-OrganizeByDate`, the script uses
 
 **What it extracts:**
 - EXIF "Date Taken" field for images
-- Metadata creation date for videos
+- Windows "Media created" and related media date fields for videos
+
+The Date Taken value is applied to both `CreationTime` and `LastWriteTime` on the destination file when the fallback condition is met.
 
 **Example:**
 ```powershell
@@ -58,7 +65,10 @@ sudo dnf install perl-Image-ExifTool
 - EXIF DateTimeOriginal
 - EXIF CreateDate
 - MediaCreateDate
+- CreationDate and TrackCreateDate
 - And other embedded metadata timestamps
+
+When used as a fallback, this value is applied to the destination file modification time with `touch`.
 
 **Example:**
 ```bash
@@ -194,7 +204,17 @@ Some files may not have embedded metadata:
 exiftool -a -G1 photo.jpg | grep -i date
 ```
 
-If no dates are found, the script will fall back to filename date or file times.
+If no dates are found, the script will fall back to filename date or file times. Filesystem fallbacks are marked as fallback dates in reports.
+
+## Filename Date Formats
+
+Both entrypoints read filename patterns from `../config/filename-date-formats.txt`. Supported tokens are `YYYY`, `MM`, `DD`, and optional time tokens `HH`, `MI`, `SS`. Token order can vary, so formats such as `YYYYMMDD`, `MM-DD-YYYY`, `DD_MM_YYYY`, and `YYYYMMDD_HHMMSS` are supported when present in the config file.
+
+## Report Generation
+
+Use `-GenerateReport` to write a CSV report of copied/replaced files. If `-ReportFile` is omitted, the report is written to `<Output>/organize-files-report.csv`.
+
+The report includes operation, source path, destination path, selected date, date source, whether a reliable date was found, whether the destination file date was set, final timestamps, and status.
 
 ## Performance Considerations
 
@@ -279,6 +299,6 @@ TARGET_PATH="${2:-~/Pictures/Organized}"
 
 ## See Also
 
-- [organize-files README](readme.md)
+- [organize-files README](../readme.md)
 - [Parameter Validation & Autocomplete](VALIDATION_AND_AUTOCOMPLETE.md)
 - [EXIF Specification](https://en.wikipedia.org/wiki/Exif)

@@ -2,8 +2,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-CATEGORY_DEFINITIONS_FILE="$SCRIPT_DIR/category-definitions.tsv"
-FILENAME_DATE_FORMATS_FILE="$SCRIPT_DIR/filename-date-formats.txt"
+CATEGORY_DEFINITIONS_FILE="$SCRIPT_DIR/config/category-definitions.tsv"
+FILENAME_DATE_FORMATS_FILE="$SCRIPT_DIR/config/filename-date-formats.txt"
+
+if [[ ! -f "$CATEGORY_DEFINITIONS_FILE" ]]; then
+  CATEGORY_DEFINITIONS_FILE="$SCRIPT_DIR/category-definitions.tsv"
+fi
+
+if [[ ! -f "$FILENAME_DATE_FORMATS_FILE" ]]; then
+  FILENAME_DATE_FORMATS_FILE="$SCRIPT_DIR/filename-date-formats.txt"
+fi
 
 OS_NAME="$(uname -s)"
 EXIFTOOL_AVAILABLE=0
@@ -45,6 +53,8 @@ USE_FILENAME_DATE=0
 USE_METADATA_DATE=0
 USE_SUPPLEMENTAL_METADATA=0
 MOVE_FILES=0
+GENERATE_REPORT=0
+REPORT_FILE=""
 HAS_CATEGORY_FILTERS=0
 TRANSFER_VERB="COPY"
 REPLACE_VERB="REPLACE"
@@ -91,6 +101,8 @@ Core options:
   -UseMetadataDate
   -UseSupplementalMetadata
   -MoveFiles
+  -GenerateReport
+  -ReportFile <path>
 
 Category flags:
   -Images  -Videos  -Audio  -Documents  -Archives  -Code  -Fonts
@@ -106,6 +118,94 @@ append_log_line() {
     mkdir -p -- "$(dirname -- "$LOG_FILE")"
     printf '%s\n' "$line" >> "$LOG_FILE"
   fi
+}
+
+csv_escape() {
+  local value="${1:-}"
+  value="${value//\"/\"\"}"
+  printf '"%s"' "$value"
+}
+
+append_csv_row() {
+  local file_path="$1"
+  shift
+  local first=1 value
+
+  for value in "$@"; do
+    if (( first )); then
+      first=0
+    else
+      printf ',' >> "$file_path"
+    fi
+    csv_escape "$value" >> "$file_path"
+  done
+  printf '\n' >> "$file_path"
+}
+
+format_epoch_iso() {
+  local epoch="$1"
+
+  if [[ -z "$epoch" ]] || (( epoch <= 0 )); then
+    printf ''
+    return
+  fi
+
+  format_epoch "$epoch" '%Y-%m-%dT%H:%M:%SZ'
+}
+
+get_default_report_file() {
+  if [[ -n "$REPORT_FILE" ]]; then
+    printf '%s' "$REPORT_FILE"
+  else
+    printf '%s' "$OUTPUT/organize-files-report.csv"
+  fi
+}
+
+write_transfer_report() {
+  local report_path="$1"
+  local status="$2"
+  local report_dir final_mtime final_mtime_iso final_creation final_creation_iso selected_iso
+  local plan_type source_path destination_path dest_root log_line metadata_date_epoch supplemental_date_epoch selected_date_epoch date_source reliable_date_found size_bytes file_date_set_source
+
+  report_dir="$(dirname -- "$report_path")"
+  mkdir -p -- "$report_dir"
+  : > "$report_path"
+  append_csv_row "$report_path" Operation SourcePath DestinationPath SizeBytes SelectedDate DateSource ReliableDateFound FileDateSet FileDateSetSource FinalCreationTime FinalLastWriteTime Status
+
+  while IFS= read -r -d '' plan_type \
+    && IFS= read -r -d '' source_path \
+    && IFS= read -r -d '' destination_path \
+    && IFS= read -r -d '' dest_root \
+    && IFS= read -r -d '' log_line \
+    && IFS= read -r -d '' metadata_date_epoch \
+    && IFS= read -r -d '' supplemental_date_epoch \
+    && IFS= read -r -d '' selected_date_epoch \
+    && IFS= read -r -d '' date_source \
+    && IFS= read -r -d '' reliable_date_found \
+    && IFS= read -r -d '' size_bytes \
+    && IFS= read -r -d '' file_date_set_source; do
+    if [[ "$status" == "Completed" && "$reliable_date_found" == "1" && "$date_source" != Filesystem:* ]]; then
+      file_date_set_source="$date_source"
+    fi
+
+    selected_iso="$(format_epoch_iso "$selected_date_epoch")"
+    final_creation_iso=""
+    final_mtime_iso=""
+    if [[ -f "$destination_path" ]]; then
+      final_creation="$(get_creation_epoch "$destination_path")"
+      final_mtime="$(get_mtime_epoch "$destination_path")"
+      final_creation_iso="$(format_epoch_iso "$final_creation")"
+      final_mtime_iso="$(format_epoch_iso "$final_mtime")"
+    fi
+
+    if [[ -z "$file_date_set_source" && "$status" != "Planned" && "$reliable_date_found" == "1" && "$date_source" != Filesystem:* ]]; then
+      file_date_set_source="$date_source"
+    fi
+
+    append_csv_row "$report_path" "$plan_type" "$source_path" "$destination_path" "$size_bytes" "$selected_iso" "$date_source" "$reliable_date_found" "$([[ -n "$file_date_set_source" ]] && printf true || printf false)" "$file_date_set_source" "$final_creation_iso" "$final_mtime_iso" "$status"
+  done < "$plan_file"
+
+  echo "Report written to: $report_path"
 }
 
 normalize_extension() {
@@ -204,13 +304,24 @@ load_filename_date_formats() {
 
 date_format_to_regex() {
   local format="$1"
-  local regex="$format"
+  local remaining="$format"
+  local regex=""
 
-  regex="${regex//YYYY/(20[0-9]{2})}"
-  regex="${regex//MM/([0-1][0-9])}"
-  regex="${regex//DD/([0-3][0-9])}"
+  DATE_TOKEN_ORDER=()
+  while [[ -n "$remaining" ]]; do
+    case "$remaining" in
+      HHMMSS*) regex+='([01][0-9]|2[0-3])([0-5][0-9])([0-5][0-9])'; DATE_TOKEN_ORDER+=("HH" "MI" "SS"); remaining="${remaining:6}" ;;
+      YYYY*) regex+='(19[0-9]{2}|20[0-9]{2}|21[0-9]{2})'; DATE_TOKEN_ORDER+=("YYYY"); remaining="${remaining:4}" ;;
+      MM*) regex+='(0[1-9]|1[0-2])'; DATE_TOKEN_ORDER+=("MM"); remaining="${remaining:2}" ;;
+      DD*) regex+='(0[1-9]|[12][0-9]|3[01])'; DATE_TOKEN_ORDER+=("DD"); remaining="${remaining:2}" ;;
+      HH*) regex+='([01][0-9]|2[0-3])'; DATE_TOKEN_ORDER+=("HH"); remaining="${remaining:2}" ;;
+      MI*) regex+='([0-5][0-9])'; DATE_TOKEN_ORDER+=("MI"); remaining="${remaining:2}" ;;
+      SS*) regex+='([0-5][0-9])'; DATE_TOKEN_ORDER+=("SS"); remaining="${remaining:2}" ;;
+      *) regex+='[^[:alnum:]]*'; remaining="${remaining:1}" ;;
+    esac
+  done
 
-  printf '%s' "$regex"
+  DATE_REGEX="(^|[^0-9])${regex}([^0-9]|$)"
 }
 
 select_category() {
@@ -305,6 +416,42 @@ format_optional_epoch() {
   format_epoch "$epoch" '%Y-%m-%d %H:%M:%S'
 }
 
+is_epoch_today() {
+  local epoch="$1"
+  local epoch_date current_date
+
+  if [[ -z "$epoch" ]] || (( epoch <= 0 )); then
+    return 1
+  fi
+
+  if [[ "$OS_NAME" == "Darwin" ]]; then
+    epoch_date="$(date -r "$epoch" '+%Y-%m-%d' 2>/dev/null || true)"
+  else
+    epoch_date="$(date -d "@$epoch" '+%Y-%m-%d' 2>/dev/null || true)"
+  fi
+
+  current_date="$(date '+%Y-%m-%d')"
+  [[ -n "$epoch_date" && "$epoch_date" == "$current_date" ]]
+}
+
+apply_file_date_epoch() {
+  local destination_path="$1"
+  local epoch="$2"
+  local label="$3"
+
+  if [[ -z "$epoch" ]] || (( epoch <= 0 )) || [[ ! -f "$destination_path" ]]; then
+    return 1
+  fi
+
+  if [[ "$OS_NAME" == "Darwin" ]]; then
+    touch -t "$(date -r "$epoch" '+%Y%m%d%H%M.%S')" "$destination_path" 2>/dev/null || return 1
+  else
+    touch -d "@$epoch" -- "$destination_path" 2>/dev/null || return 1
+  fi
+
+  echo "Applied $label to: $destination_path"
+}
+
 date_components_to_epoch() {
   local year="$1"
   local month="$2"
@@ -322,36 +469,81 @@ get_date_from_filename_epoch() {
   local year=""
   local month=""
   local day=""
+  local hour="00"
+  local minute="00"
+  local second="00"
 
-  local date_format regex_pattern
+  local date_format regex_pattern group_index token match_offset
   for date_format in "${FILENAME_DATE_FORMATS[@]}"; do
-    regex_pattern="$(date_format_to_regex "$date_format")"
+    date_format_to_regex "$date_format"
+    regex_pattern="$DATE_REGEX"
     if [[ "$name" =~ $regex_pattern ]]; then
-      year="${BASH_REMATCH[1]}"
-      month="${BASH_REMATCH[2]}"
-      day="${BASH_REMATCH[3]}"
-      date_components_to_epoch "$year" "$month" "$day"
-      return 0
+      match_offset=2
+      group_index=0
+      year=""; month=""; day=""; hour="00"; minute="00"; second="00"
+      for token in "${DATE_TOKEN_ORDER[@]}"; do
+        group_index=$((group_index + 1))
+        case "$token" in
+          YYYY) year="${BASH_REMATCH[$((group_index + match_offset - 1))]}" ;;
+          MM) month="${BASH_REMATCH[$((group_index + match_offset - 1))]}" ;;
+          DD) day="${BASH_REMATCH[$((group_index + match_offset - 1))]}" ;;
+          HH) hour="${BASH_REMATCH[$((group_index + match_offset - 1))]}" ;;
+          MI) minute="${BASH_REMATCH[$((group_index + match_offset - 1))]}" ;;
+          SS) second="${BASH_REMATCH[$((group_index + match_offset - 1))]}" ;;
+        esac
+      done
+
+      if [[ -n "$year" && -n "$month" && -n "$day" ]]; then
+        date_components_to_epoch_time "$year" "$month" "$day" "$hour" "$minute" "$second"
+        return 0
+      fi
     fi
   done
 
   return 1
 }
 
+date_components_to_epoch_time() {
+  local year="$1"
+  local month="$2"
+  local day="$3"
+  local hour="$4"
+  local minute="$5"
+  local second="$6"
+
+  if [[ "$OS_NAME" == "Darwin" ]]; then
+    date -u -j -f '%Y-%m-%d %H:%M:%S' "$year-$month-$day $hour:$minute:$second" '+%s' 2>/dev/null
+  else
+    date -u -d "$year-$month-$day $hour:$minute:$second" '+%s' 2>/dev/null
+  fi
+}
+
 get_metadata_date_epoch() {
+  local info
+  info="$(get_metadata_date_info "$1" || true)"
+  if [[ -n "$info" ]]; then
+    printf '%s' "${info%%$'\t'*}"
+    return 0
+  fi
+  return 1
+}
+
+get_metadata_date_info() {
   local file_path="$1"
-  local value
+  local tag value
 
   if (( ! EXIFTOOL_AVAILABLE )); then
     return 1
   fi
 
-  value="$(exiftool -s3 -d '%s' -DateTimeOriginal -CreateDate -MediaCreateDate -- "$file_path" 2>/dev/null | head -n 1 || true)"
+  for tag in DateTimeOriginal MediaCreateDate CreationDate CreateDate TrackCreateDate MediaModifyDate FileModifyDate ModifyDate; do
+    value="$(exiftool -s3 -d '%s' -"$tag" -- "$file_path" 2>/dev/null | head -n 1 || true)"
+    if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
+      printf '%s\tMetadata:%s' "$value" "$tag"
+      return 0
+    fi
+  done
 
-  if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
-    printf '%s' "$value"
-    return 0
-  fi
 
   return 1
 }
@@ -455,10 +647,19 @@ invoke_transfer() {
 
 get_best_date_epoch() {
   local file_path="$1"
-  local category_name supplemental_epoch metadata_epoch filename_epoch creation_epoch
+  local supplemental_epoch="${2:-}"
+  local metadata_epoch="${3:-}"
+  local supplemental_checked="${4:-0}"
+  local metadata_checked="${5:-0}"
+  local category_name filename_epoch creation_epoch
 
   if (( USE_SUPPLEMENTAL_METADATA )); then
-    if supplemental_epoch="$(get_supplemental_date_epoch "$file_path")"; then
+    if [[ -n "$supplemental_epoch" ]]; then
+      printf '%s' "$supplemental_epoch"
+      return 0
+    fi
+
+    if [[ "$supplemental_checked" != "1" ]] && supplemental_epoch="$(get_supplemental_date_epoch "$file_path")"; then
       printf '%s' "$supplemental_epoch"
       return 0
     fi
@@ -467,7 +668,12 @@ get_best_date_epoch() {
   category_name="$(get_category_name_for_file "$file_path" || true)"
 
   if (( USE_METADATA_DATE )) && [[ "$category_name" == "Images" || "$category_name" == "Videos" ]]; then
-    if metadata_epoch="$(get_metadata_date_epoch "$file_path")"; then
+    if [[ -n "$metadata_epoch" ]]; then
+      printf '%s' "$metadata_epoch"
+      return 0
+    fi
+
+    if [[ "$metadata_checked" != "1" ]] && metadata_epoch="$(get_metadata_date_epoch "$file_path")"; then
       printf '%s' "$metadata_epoch"
       return 0
     fi
@@ -638,9 +844,15 @@ get_supplemental_date_epoch() {
 
 get_supplemental_metadata_path() {
   local file_path="$1"
-  local metadata_filename
-  metadata_filename="$(basename -- "$file_path").supplemental-metadata.json"
-  printf '%s/%s' "$(dirname -- "$file_path")" "$metadata_filename"
+  local file_name base_name parent_dir
+
+  file_name="$(basename -- "$file_path")"
+  base_name="${file_name%.*}"
+  parent_dir="$(dirname -- "$file_path")"
+
+  printf '%s\n' "$parent_dir/$file_name.supplemental-metadata.json"
+  printf '%s\n' "$parent_dir/$file_name.json"
+  printf '%s\n' "$parent_dir/$base_name.json"
 }
 
 get_supplemental_metadata() {
@@ -651,13 +863,14 @@ get_supplemental_metadata() {
     return 1
   fi
 
-  metadata_path="$(get_supplemental_metadata_path "$file_path")"
+  while IFS= read -r metadata_path; do
+    if [[ -f "$metadata_path" ]]; then
+      cat "$metadata_path"
+      return 0
+    fi
+  done < <(get_supplemental_metadata_path "$file_path")
 
-  if [[ ! -f "$metadata_path" ]]; then
-    return 1
-  fi
-
-  cat "$metadata_path"
+  return 1
 }
 
 apply_supplemental_metadata() {
@@ -678,6 +891,25 @@ apply_supplemental_metadata() {
   fi
 
   echo "Applied metadata to: $destination_path"
+}
+
+apply_date_taken_fallback() {
+  local destination_path="$1"
+  local metadata_epoch="$2"
+  local supplemental_epoch="$3"
+  local destination_mtime
+
+  if [[ -z "$metadata_epoch" ]] || (( metadata_epoch <= 0 )) || [[ ! -f "$destination_path" ]]; then
+    return 0
+  fi
+
+  destination_mtime="$(get_mtime_epoch "$destination_path")"
+  if [[ -n "$supplemental_epoch" ]] && ! is_epoch_today "$destination_mtime"; then
+    return 0
+  fi
+
+  apply_file_date_epoch "$destination_path" "$metadata_epoch" "Date taken" || \
+    echo "Warning: Failed to apply Date taken to file: $destination_path"
 }
 
 collect_files_from_directory() {
@@ -769,6 +1001,12 @@ while (( $# > 0 )); do
       LOG_FILE="$1"
       shift
       ;;
+    -ReportFile)
+      shift
+      (( $# > 0 )) || die "Missing value for -ReportFile"
+      REPORT_FILE="$1"
+      shift
+      ;;
     -MaxFiles)
       shift
       (( $# > 0 )) || die "Missing value for -MaxFiles"
@@ -823,6 +1061,10 @@ while (( $# > 0 )); do
       ;;
     -MoveFiles)
       MOVE_FILES=1
+      shift
+      ;;
+    -GenerateReport)
+      GENERATE_REPORT=1
       shift
       ;;
     -Images|-Image)
@@ -977,17 +1219,66 @@ for file_path in "${FILES[@]}"; do
   fi
 
   key="$(get_file_key "$file_path")"
-  best_date_epoch="$(get_best_date_epoch "$file_path")"
-  best_date_display="$(format_optional_epoch "$best_date_epoch")"
-  created_display="$(format_optional_epoch "$(get_creation_epoch "$file_path")")"
-  modified_display="$(format_optional_epoch "$(get_mtime_epoch "$file_path")")"
+  category_name="$(get_category_name_for_file "$file_path" || true)"
+  supplemental_date_epoch=""
+  metadata_date_epoch=""
+  metadata_date_info=""
+  metadata_date_source=""
+  filename_date_epoch=""
+  creation_epoch=""
+  modified_epoch=""
+  best_date_source=""
+  reliable_date_found=0
+  supplemental_date_checked=0
+  metadata_date_checked=0
 
-  date_log="DATE: $(basename -- "$file_path") | Selected=$best_date_display | Created=$created_display | Modified=$modified_display"
+  if (( USE_SUPPLEMENTAL_METADATA )); then
+    supplemental_date_checked=1
+    supplemental_date_epoch="$(get_supplemental_date_epoch "$file_path" || true)"
+  fi
+
+  if (( USE_METADATA_DATE )) && [[ "$category_name" == "Images" || "$category_name" == "Videos" ]]; then
+    metadata_date_checked=1
+    metadata_date_info="$(get_metadata_date_info "$file_path" || true)"
+    if [[ -n "$metadata_date_info" ]]; then
+      metadata_date_epoch="${metadata_date_info%%$'\t'*}"
+      metadata_date_source="${metadata_date_info#*$'\t'}"
+    fi
+  fi
+
+  filename_date_epoch="$(get_date_from_filename_epoch "$(basename -- "$file_path")" || true)"
+  creation_epoch="$(get_creation_epoch "$file_path")"
+  modified_epoch="$(get_mtime_epoch "$file_path")"
+
+  if [[ -n "$supplemental_date_epoch" ]]; then
+    best_date_epoch="$supplemental_date_epoch"
+    best_date_source="Supplemental"
+    reliable_date_found=1
+  elif [[ -n "$metadata_date_epoch" ]]; then
+    best_date_epoch="$metadata_date_epoch"
+    best_date_source="$metadata_date_source"
+    reliable_date_found=1
+  elif [[ -n "$filename_date_epoch" ]]; then
+    best_date_epoch="$filename_date_epoch"
+    best_date_source="Filename"
+    reliable_date_found=1
+  elif [[ -n "$creation_epoch" ]] && (( creation_epoch > 0 )); then
+    best_date_epoch="$creation_epoch"
+    best_date_source="Filesystem:CreationTime"
+  else
+    best_date_epoch="$modified_epoch"
+    best_date_source="Filesystem:LastWriteTime"
+  fi
+
+  best_date_display="$(format_optional_epoch "$best_date_epoch")"
+  created_display="$(format_optional_epoch "$creation_epoch")"
+  modified_display="$(format_optional_epoch "$modified_epoch")"
+
+  date_log="DATE: $(basename -- "$file_path") | Selected=$best_date_display | Source=$best_date_source | Reliable=$reliable_date_found | Created=$created_display | Modified=$modified_display"
   echo "$date_log"
   append_log_line "$date_log"
 
   dest_root="$OUTPUT"
-  category_name="$(get_category_name_for_file "$file_path" || true)"
 
   if (( SEPARATE_BY_TYPE )); then
     if [[ -n "$category_name" ]]; then
@@ -1024,32 +1315,36 @@ for file_path in "${FILES[@]}"; do
     if (( DRY_RUN )); then
       echo "[SIMULATION] $log_line"
       append_log_line "$log_line"
-    else
+    fi
+
+    if (( ! DRY_RUN )); then
       if [[ -n "${PLANNED_DESTINATIONS[$destination_path]+x}" ]]; then
         has_destination_collisions=1
       else
         PLANNED_DESTINATIONS["$destination_path"]=1
       fi
-
-      printf '%s\0%s\0%s\0%s\0%s\0' "replace" "$file_path" "$destination_path" "$dest_root" "$log_line" >> "$plan_file"
-      plan_count=$((plan_count + 1))
     fi
+
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "replace" "$file_path" "$destination_path" "$dest_root" "$log_line" "$metadata_date_epoch" "$supplemental_date_epoch" "$best_date_epoch" "$best_date_source" "$reliable_date_found" "$(stat_size "$file_path")" "" >> "$plan_file"
+    plan_count=$((plan_count + 1))
   else
     log_line="${TRANSFER_VERB}: $file_path -> $destination_path"
 
     if (( DRY_RUN )); then
       echo "[SIMULATION] $log_line"
       append_log_line "$log_line"
-    else
+    fi
+
+    if (( ! DRY_RUN )); then
       if [[ -n "${PLANNED_DESTINATIONS[$destination_path]+x}" ]]; then
         has_destination_collisions=1
       else
         PLANNED_DESTINATIONS["$destination_path"]=1
       fi
-
-      printf '%s\0%s\0%s\0%s\0%s\0' "transfer" "$file_path" "$destination_path" "$dest_root" "$log_line" >> "$plan_file"
-      plan_count=$((plan_count + 1))
     fi
+
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "transfer" "$file_path" "$destination_path" "$dest_root" "$log_line" "$metadata_date_epoch" "$supplemental_date_epoch" "$best_date_epoch" "$best_date_source" "$reliable_date_found" "$(stat_size "$file_path")" "" >> "$plan_file"
+    plan_count=$((plan_count + 1))
   fi
 done
 
@@ -1071,7 +1366,7 @@ if (( ! DRY_RUN && plan_count > 0 )); then
   if (( effective_threads > 1 )); then
     echo "Processing $plan_count file transfers with $effective_threads threads..."
 
-    xargs -0 -n 5 -P "$effective_threads" bash -c '
+    xargs -0 -n 12 -P "$effective_threads" bash -c '
       set -euo pipefail
       move_files="$1"
       os_name="$2"
@@ -1102,7 +1397,14 @@ if (( ! DRY_RUN && plan_count > 0 )); then
       && IFS= read -r -d '' source_path \
       && IFS= read -r -d '' destination_path \
       && IFS= read -r -d '' dest_root \
-      && IFS= read -r -d '' log_line; do
+      && IFS= read -r -d '' log_line \
+      && IFS= read -r -d '' metadata_date_epoch \
+      && IFS= read -r -d '' supplemental_date_epoch \
+      && IFS= read -r -d '' selected_date_epoch \
+      && IFS= read -r -d '' date_source \
+      && IFS= read -r -d '' reliable_date_found \
+      && IFS= read -r -d '' size_bytes \
+      && IFS= read -r -d '' file_date_set_source; do
       mkdir -p -- "$dest_root"
       invoke_transfer "$source_path" "$destination_path"
     done < "$plan_file"
@@ -1112,7 +1414,14 @@ if (( ! DRY_RUN && plan_count > 0 )); then
     && IFS= read -r -d '' source_path \
     && IFS= read -r -d '' destination_path \
     && IFS= read -r -d '' dest_root \
-    && IFS= read -r -d '' log_line; do
+    && IFS= read -r -d '' log_line \
+    && IFS= read -r -d '' metadata_date_epoch \
+    && IFS= read -r -d '' supplemental_date_epoch \
+    && IFS= read -r -d '' selected_date_epoch \
+    && IFS= read -r -d '' date_source \
+    && IFS= read -r -d '' reliable_date_found \
+    && IFS= read -r -d '' size_bytes \
+    && IFS= read -r -d '' file_date_set_source; do
     echo "$log_line"
     append_log_line "$log_line"
 
@@ -1124,12 +1433,25 @@ if (( ! DRY_RUN && plan_count > 0 )); then
       fi
     fi
 
+    if [[ "$reliable_date_found" == "1" && "$date_source" != Filesystem:* ]]; then
+      apply_file_date_epoch "$destination_path" "$selected_date_epoch" "$date_source" || \
+        echo "Warning: Failed to apply selected date to file: $destination_path"
+    fi
+
     if [[ "$plan_type" == "replace" ]]; then
       replaced=$((replaced + 1))
     else
       transferred=$((transferred + 1))
     fi
   done < "$plan_file"
+fi
+
+if (( GENERATE_REPORT )); then
+  if (( DRY_RUN )); then
+    write_transfer_report "$(get_default_report_file)" "Planned"
+  else
+    write_transfer_report "$(get_default_report_file)" "Completed"
+  fi
 fi
 
 echo

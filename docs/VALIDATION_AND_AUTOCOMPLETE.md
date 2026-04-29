@@ -11,6 +11,9 @@ This document summarizes the parameter validation and autocomplete improvements 
 - `[ValidateRange()]` for numeric parameters:
   - `-MaxFiles`: Must be ≥ 0
   - `-Threads`: Must be ≥ 1 (positive integer)
+- Report options:
+  - `-GenerateReport`: Writes a CSV report for copied/replaced files or dry-run planned operations
+  - `-ReportFile`: Optional report path
 
 **Benefits:**
 - Unknown parameters now produce clear error messages
@@ -70,6 +73,7 @@ sudo cp organize-files.completion.sh /etc/bash_completion.d/organize-files
 |-----------|-----------|-----------------|
 | `-MaxFiles` | Must be ≥ 0 | "[CmdletBinding()] error" |
 | `-Threads` | Must be ≥ 1 | "[CmdletBinding()] error" |
+| `-ReportFile` | Optional file path | Parent directory is created when reporting runs |
 | Any unknown param | Not in parameter list | "Unknown parameter" error |
 
 ### Bash
@@ -78,6 +82,7 @@ sudo cp organize-files.completion.sh /etc/bash_completion.d/organize-files
 |-----------|-----------|--------------|
 | `-MaxFiles` | Must be ≥ 0 | "-MaxFiles must be a non-negative integer" |
 | `-Threads` | Must be ≥ 1 | "-Threads must be a positive integer" |
+| `-ReportFile` | Requires a value when supplied | "Missing value for -ReportFile" |
 | Any unknown flag | Falls to default case | "Unknown argument: ..." |
 
 ## Autocomplete Examples
